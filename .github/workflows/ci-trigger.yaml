@@ -67,7 +67,7 @@ jobs:
 
     steps:
       - name: Checkout — full history required for git diff range
-        uses: actions/checkout@v6.0.3
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
 
@@ -117,7 +117,9 @@ jobs:
       # service uses src/<service>/ directly. Pass the context override so the
       # reusable worker does not need repo-specific knowledge baked in.
       docker_context: ${{ matrix.service == 'cartservice' && 'src/cartservice/src' || format('src/{0}', matrix.service) }}
-      push_image: ${{ github.event_name != 'pull_request' }}
+      # fromJSON() casts the expression string to a proper boolean.
+      # workflow_call boolean inputs do not accept raw expression strings.
+      push_image: ${{ fromJSON(github.event_name != 'pull_request') }}
     secrets: inherit   # forward GITHUB_TOKEN + any repo secrets to the worker
 
   # ============================================================================
