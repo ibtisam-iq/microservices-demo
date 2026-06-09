@@ -43,7 +43,9 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
-  contents: read   # minimally scoped at top level; workers escalate as needed
+  contents: read
+  packages: write          # GHCR push (delegated to reusable-build.yaml)
+  security-events: write   # Trivy SARIF upload (delegated to reusable-build.yaml)
 
 env:
   # Registry namespace — all service images live under this prefix.
