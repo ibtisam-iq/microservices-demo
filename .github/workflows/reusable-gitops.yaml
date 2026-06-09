@@ -1,0 +1,154 @@
+# =============================================================================
+# Reusable Worker — GitOps CD Manifest Update
+# Called by: ci-trigger.yaml (once, after all matrix builds succeed)
+#
+# Responsibilities:
+#   Write updated image tags for all changed services into the CD repo in a
+#   single atomic commit. ArgoCD reconciles once per commit, not once per
+#   service — batching is critical to avoid N sequential sync waves for an
+#   N-service push.
+#
+# GitOps contract:
+#   CD repo:     ibtisam-iq/platform-engineering-systems
+#   Manifest:    systems/microservices-demo/src/<service>/image.env
+#   Format:      IMAGE_TAG=sha-<full-sha>
+#
+#   ArgoCD Image Updater (or a Helm values patch) reads IMAGE_TAG from
+#   image.env and reconciles the Deployment's image field.
+#   When Helm chart replaces image.env, swap the echo > path with:
+#     sed -i "s|tag:.*|tag: ${IMAGE_TAG}|" systems/.../values.yaml
+#
+# Token security (mirrors java-monolith Stage 14 rationale):
+#   Clone with public HTTPS URL — token is never in process argv.
+#   Set authenticated remote AFTER clone via git remote set-url.
+#   Clear token from remote URL after push — not left in workspace at cleanup.
+#
+# Idempotency:
+#   git diff --cached --quiet guards the push; if all tags are unchanged
+#   (e.g., workflow_dispatch with no real code change) no commit is made.
+#   [skip ci] in the commit message prevents a feedback loop triggering CI
+#   on the CD repo if that repo also has GitHub Actions.
+#
+# Required secrets:
+#   GIT_TOKEN — GitHub PAT with repo scope on platform-engineering-systems.
+#               Do NOT use GITHUB_TOKEN — it cannot push to a foreign repo.
+# =============================================================================
+
+name: Reusable — GitOps CD Manifest Update
+
+on:
+  workflow_call:
+    inputs:
+      services:
+        description: "JSON array of service names to update (e.g. '["frontend","cartservice"]')"
+        required: true
+        type: string
+      image_tag:
+        description: "Image tag to write (e.g. sha-abc1234f…)"
+        required: true
+        type: string
+
+jobs:
+
+  gitops-update:
+    name: Update CD Manifests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    permissions:
+      contents: read   # this repo only — CD repo access is via GIT_TOKEN PAT
+
+    env:
+      CD_REPO: ibtisam-iq/platform-engineering-systems
+      CD_BASE_PATH: systems/microservices-demo/src
+      IMAGE_TAG: ${{ inputs.image_tag }}
+
+    steps:
+
+      # ────────────────────────────────────────────────────────────────────────
+      # STAGE 1 — Clone CD repo (public URL — token never in argv)
+      # Mirrors java-monolith Stage 14 pattern exactly.
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Clone CD repo — public URL (token withheld from process argv)
+        run: |
+          git clone https://github.com/${CD_REPO}.git cd-repo
+
+      # ────────────────────────────────────────────────────────────────────────
+      # STAGE 2 — Configure git identity and authenticated remote
+      # Set-url after clone writes token to .git/config (not visible to ps).
+      # --local scopes identity to this clone only.
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Configure git identity and authenticated remote
+        env:
+          GIT_TOKEN: ${{ secrets.GIT_TOKEN }}
+        run: |
+          cd cd-repo
+          git config --local user.email "github-actions@ibtisam-iq.com"
+          git config --local user.name  "GitHub Actions CI"
+          git remote set-url origin https://x-access-token:${GIT_TOKEN}@github.com/${CD_REPO}.git
+
+      # ────────────────────────────────────────────────────────────────────────
+      # STAGE 3 — Write image tags for all changed services
+      # Iterate over the JSON array of services. For each service, write
+      # image.env under systems/microservices-demo/services/<service>/.
+      # A single loop produces all file changes before any git commit is made —
+      # ensures the subsequent commit is atomic across all services.
+      #
+      # jq -r '.[]' safely iterates a JSON array in shell without eval or
+      # IFS manipulation. Services with spaces in names (none here) are safe.
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Write updated image tags for all changed services
+        run: |
+          cd cd-repo
+          echo '${{ inputs.services }}' | jq -r '.[]' | while read -r SERVICE; do
+            MANIFEST_PATH="${CD_BASE_PATH}/${SERVICE}/image.env"
+            mkdir -p "$(dirname "${MANIFEST_PATH}")"
+
+            cat > "${MANIFEST_PATH}" <<EOF
+          IMAGE_TAG=${IMAGE_TAG}
+          UPDATED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          UPDATED_BY=github-actions-run-${{ github.run_number }}
+          GIT_COMMIT=${{ github.sha }}
+          GIT_REPO=${{ github.repository }}
+          SERVICE=${SERVICE}
+          EOF
+
+            git add "${MANIFEST_PATH}"
+            echo "Staged: ${MANIFEST_PATH}"
+          done
+
+      # ────────────────────────────────────────────────────────────────────────
+      # STAGE 4 — Commit and push (idempotent — no-op if nothing changed)
+      # git diff --cached --quiet exits 0 when staging area is clean (no diff).
+      # Push only executes inside the else branch — i.e. when a commit was made.
+      # git push origin HEAD is branch-rename resilient (does not hardcode main).
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Commit and push — skip if no manifest changed
+        run: |
+          cd cd-repo
+          if git diff --cached --quiet; then
+            echo "Nothing to commit — all image tags are already up to date."
+          else
+            git commit -m "ci: update microservices-demo image tags to ${IMAGE_TAG} [skip ci]"
+            git push origin HEAD
+            echo "CD repo updated successfully."
+          fi
+
+      # ────────────────────────────────────────────────────────────────────────
+      # STAGE 5 — Clear token from remote URL
+      # Removes the authenticated URL from .git/config so the token is not
+      # present in the workspace at cleanup time or in runner logs.
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Clear token from remote URL
+        if: always()
+        run: |
+          cd cd-repo 2>/dev/null || exit 0
+          git remote set-url origin https://github.com/${CD_REPO}.git
+
+      # ────────────────────────────────────────────────────────────────────────
+      # Cleanup — remove the cloned CD repo from the runner workspace.
+      # rm -rf on a non-existent path exits 0 — safe if clone failed.
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Cleanup — remove cloned CD repo
+        if: always()
+        run: rm -rf cd-repo

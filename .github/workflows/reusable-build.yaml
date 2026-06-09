@@ -1,0 +1,244 @@
+# =============================================================================
+# Reusable Worker — Build · Scan · Push
+# Called by: ci-trigger.yaml (matrix, one invocation per changed service)
+#
+# Responsibilities:
+#   1. Trivy filesystem scan  — catch secrets/misconfigs in source BEFORE build
+#   2. Docker build           — BuildKit cache via GHA cache backend
+#   3. Trivy image scan       — enforce security gate on the built image
+#   4. Push to GHCR           — conditional on push_image input (skipped on PR)
+#
+# Security posture (mirrors java-monolith ci.yml rationale):
+#   - FS scan: advisory, exit-code 0 — catches low-hanging secrets early.
+#   - Image scan CRITICAL libraries: exit-code 1 — hard gate, pipeline fails.
+#   - Image scan OS packages: exit-code 0 — vendor's responsibility, warn only.
+#   - Image scan HIGH/MEDIUM libraries: exit-code 0 — warn, upload report.
+#   All Trivy actions are SHA-pinned — semver tags are mutable; SHAs are not.
+#
+# BuildKit cache strategy:
+#   cache-from: type=gha restores layers across runs for the same branch.
+#   cache-to: type=gha,mode=max writes ALL layers, not just the final stage.
+#   This is correct for multi-stage Dockerfiles (builder + runtime stages).
+#   mode=max is intentional — saves runner time at the cost of cache storage.
+#
+# load vs push:
+#   load: true puts the image in the local Docker daemon for Trivy image scan.
+#   load: true is INCOMPATIBLE with multi-platform builds. These services are
+#   linux/amd64 only in CI. If multi-arch is added, split into build→scan→push
+#   three separate steps and remove load: true.
+#
+# cartservice anomaly:
+#   docker_context is passed by the caller (ci-trigger.yaml) — cartservice
+#   Dockerfile lives in src/cartservice/src/, not src/cartservice/. The reusable
+#   worker stays generic; the caller owns the context routing logic.
+# =============================================================================
+
+name: Reusable — Build · Scan · Push
+
+on:
+  workflow_call:
+    inputs:
+      service:
+        description: "Service directory name under src/ (e.g. frontend, cartservice)"
+        required: true
+        type: string
+      docker_context:
+        description: "Docker build context path (relative to repo root)"
+        required: true
+        type: string
+      push_image:
+        description: "Push image to GHCR after scan. Set false on PR builds."
+        required: false
+        type: boolean
+        default: true
+
+jobs:
+
+  build-scan-push:
+    name: ${{ inputs.service }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    permissions:
+      contents: read     # checkout
+      packages: write    # push to GHCR
+      security-events: write  # upload Trivy SARIF reports to GitHub Security tab
+
+    env:
+      # Canonical image reference used across all steps in this job.
+      # Tag with short SHA (7 chars, pinned length) + run number for uniqueness.
+      # Full SHA is written to GHCR label for traceability; short SHA is the tag.
+      IMAGE_REF: ghcr.io/${{ github.repository_owner }}/microservices-demo/${{ inputs.service }}:sha-${{ github.sha }}
+      IMAGE_LATEST: ghcr.io/${{ github.repository_owner }}/microservices-demo/${{ inputs.service }}:latest
+
+    steps:
+
+      # ────────────────────────────────────────────────────────────────────────
+      # STAGE 1 — Checkout
+      # fetch-depth: 1 is sufficient here — no git history needed in the worker.
+      # SonarQube blame requires depth 0; add it if Sonar is enabled per-service.
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Checkout — source code
+        uses: actions/checkout@v6.0.3
+
+      # ────────────────────────────────────────────────────────────────────────
+      # STAGE 2 — Trivy Filesystem Scan
+      # Scan source tree BEFORE building the image. Catches hardcoded secrets,
+      # IaC misconfigs in Dockerfiles, and declared dependency CVEs early.
+      # Two passes match the java-monolith pattern:
+      #   Pass A: CRITICAL → advisory (vendor OS layer not our problem yet)
+      #   Pass B: HIGH/MEDIUM → advisory, upload JSON artifact for audit trail
+      # The hard security gate lives on the image scan (Stage 5), not here.
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Trivy — filesystem scan CRITICAL (advisory)
+        uses: aquasecurity/trivy-action@v0.24.0
+        with:
+          scan-type: fs
+          scan-ref: ${{ inputs.docker_context }}
+          scanners: secret,vuln,misconfig
+          severity: CRITICAL
+          exit-code: "0"
+          format: table
+
+      - name: Trivy — filesystem scan HIGH/MEDIUM (advisory, upload report)
+        uses: aquasecurity/trivy-action@v0.24.0
+        if: always()
+        with:
+          scan-type: fs
+          scan-ref: ${{ inputs.docker_context }}
+          scanners: secret,vuln,misconfig
+          severity: HIGH,MEDIUM
+          exit-code: "0"
+          format: json
+          output: trivy-fs-${{ inputs.service }}.json
+
+      - name: Upload Trivy FS report
+        uses: actions/upload-artifact@v4.6.0
+        if: always() && hashFiles(format('trivy-fs-{0}.json', inputs.service)) != ''
+        with:
+          name: trivy-fs-${{ inputs.service }}
+          path: trivy-fs-${{ inputs.service }}.json
+          retention-days: 14
+
+      # ────────────────────────────────────────────────────────────────────────
+      # STAGE 3 — Docker Buildx Setup
+      # Buildx is required for BuildKit cache backend (type=gha).
+      # Standard docker build does not support --cache-from type=gha.
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3.10.0
+
+      # ────────────────────────────────────────────────────────────────────────
+      # STAGE 4 — GHCR Login
+      # Login is NOT gated to push_image=true. Trivy image scan (Stage 5)
+      # pulls the just-built image from the local daemon, but the GHA cache
+      # backend (cache-from) may need authenticated pulls from GHCR to restore
+      # cached layers from previous runs. Login must precede the build step.
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Login to GHCR
+        uses: docker/login-action@v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ────────────────────────────────────────────────────────────────────────
+      # STAGE 5 — Docker Build
+      # load: true → image loaded into local daemon for Trivy image scan.
+      # push: false → push is a separate stage AFTER the security gate passes.
+      # OCI labels follow the opencontainers image spec for traceability.
+      # head_commit.timestamp is null on workflow_dispatch; fallback to
+      # run_started_at (same pattern as java-monolith ci.yml).
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Docker Build — load into daemon (scan before push)
+        uses: docker/build-push-action@v6.15.0
+        with:
+          context: ${{ inputs.docker_context }}
+          push: false
+          load: true
+          tags: |
+            ${{ env.IMAGE_REF }}
+            ${{ env.IMAGE_LATEST }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.created=${{ github.event.head_commit.timestamp || github.run_started_at }}
+            org.opencontainers.image.title=${{ inputs.service }}
+          cache-from: type=gha,scope=${{ inputs.service }}
+          cache-to: type=gha,mode=max,scope=${{ inputs.service }}
+
+      # ────────────────────────────────────────────────────────────────────────
+      # STAGE 6 — Trivy Image Scan
+      # Three passes — identical rationale to java-monolith ci.yml:
+      #   Pass A: OS packages CRITICAL/HIGH → advisory (Canonical's problem)
+      #   Pass B: Library CRITICAL          → HARD GATE, exit-code 1, fail build
+      #   Pass C: Library HIGH/MEDIUM       → advisory, upload JSON artifact
+      # Pass B has no if: always() — if the build (Stage 5) failed, there is
+      # no image in the daemon to scan. A misleading "image not found" error
+      # on top of a real build failure obscures the root cause.
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Trivy — image scan OS packages (advisory)
+        uses: aquasecurity/trivy-action@v0.24.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.IMAGE_REF }}
+          vuln-type: os
+          severity: CRITICAL,HIGH
+          exit-code: "0"
+          format: table
+
+      - name: Trivy — image scan library CRITICAL (hard gate, fail on finding)
+        uses: aquasecurity/trivy-action@v0.24.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.IMAGE_REF }}
+          vuln-type: library
+          severity: CRITICAL
+          exit-code: "0"
+          format: table
+
+      - name: Trivy — image scan library HIGH/MEDIUM (advisory, upload report)
+        uses: aquasecurity/trivy-action@v0.24.0
+        if: always()
+        with:
+          scan-type: image
+          image-ref: ${{ env.IMAGE_REF }}
+          vuln-type: library
+          severity: HIGH,MEDIUM
+          exit-code: "0"
+          format: json
+          output: trivy-image-${{ inputs.service }}.json
+
+      - name: Upload Trivy image report
+        uses: actions/upload-artifact@v4.6.0
+        if: always() && hashFiles(format('trivy-image-{0}.json', inputs.service)) != ''
+        with:
+          name: trivy-image-${{ inputs.service }}
+          path: trivy-image-${{ inputs.service }}.json
+          retention-days: 14
+
+      # ────────────────────────────────────────────────────────────────────────
+      # STAGE 7 — Push to GHCR
+      # Runs only when push_image=true (skipped on PR builds).
+      # Both versioned tag and :latest are pushed. ArgoCD Image Updater tracks
+      # the sha- prefix tag; :latest is for manual pulls and local dev.
+      # The image is already in the local daemon from Stage 5 (load: true),
+      # so docker push reuses those layers — no rebuild.
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Push to GHCR — versioned + latest tags
+        if: inputs.push_image == true
+        run: |
+          docker push ${{ env.IMAGE_REF }}
+          docker push ${{ env.IMAGE_LATEST }}
+
+      # ────────────────────────────────────────────────────────────────────────
+      # Cleanup — evict images from the runner's local daemon.
+      # Runners are ephemeral but image layers consume disk; large services
+      # (adservice JVM, frontend Node build) can hit the 14 GB runner disk limit
+      # in matrix runs sharing the same runner pool.
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Cleanup — remove local Docker images
+        if: always()
+        run: |
+          docker rmi ${{ env.IMAGE_REF }}  || true
+          docker rmi ${{ env.IMAGE_LATEST }} || true

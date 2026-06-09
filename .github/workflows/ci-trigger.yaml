@@ -1,0 +1,143 @@
+# =============================================================================
+# DevSecOps CI — Microservices Trigger
+# Repo:    github.com/ibtisam-iq/microservices-demo
+# Pattern: Monorepo matrix dispatch — detect changed services, fan out per
+#          service to reusable workers via workflow_call.
+#
+# Design decisions:
+#   - paths: src/** ensures doc/infra changes never burn CI minutes.
+#   - fetch-depth: 0 is mandatory; shallow clones break git diff range.
+#   - ${{ github.event.before }} is empty on the very first push to a branch
+#     (before SHA is 0000…). The fallback HEAD~1 handles that edge case so
+#     the matrix never emits an empty array on branch creation.
+#   - jq produces a compact JSON array consumed by fromJson() in the matrix.
+#   - fail-fast: false — a broken adservice must not abort a clean frontend
+#     build. Each service owns its own blast radius.
+#   - loadgenerator is intentionally excluded from the matrix; it is a test
+#     harness, not a production service, and carries no security gate.
+#
+# Required secrets:  none at this level — workers declare their own.
+# Required permissions: contents:read (checkout), packages:write (GHCR push
+#   delegated to workers), id-token:write delegated to reusable-gitops.yaml.
+# =============================================================================
+
+name: DevSecOps CI — Microservices
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/**"
+      - ".github/workflows/**"   # workflow changes must be validated on PR
+  workflow_dispatch:             # manual trigger for re-runs without a dummy commit
+
+# Cancel in-progress runs on the same branch.
+# Safe on PR (no registry side-effects); dangerous on main push mid-push phase.
+# Scope cancel-in-progress to PR only — identical rationale to java-monolith ci.yml.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read   # minimally scoped at top level; workers escalate as needed
+
+env:
+  # Registry namespace — all service images live under this prefix.
+  # Format: ghcr.io/<owner>/microservices-demo/<service>:<tag>
+  REGISTRY: ghcr.io
+  IMAGE_NAMESPACE: ${{ github.repository_owner }}/microservices-demo
+
+jobs:
+
+  # ============================================================================
+  # JOB 1 — detect-changes
+  # Emit a JSON array of service directory names whose source changed in this
+  # push. Downstream matrix reads this array; empty array short-circuits build.
+  # ============================================================================
+  detect-changes:
+    name: Detect Changed Services
+    runs-on: ubuntu-24.04
+    outputs:
+      services: ${{ steps.changed.outputs.services }}
+      has_changes: ${{ steps.changed.outputs.has_changes }}
+
+    steps:
+      - name: Checkout — full history required for git diff range
+        uses: actions/checkout@v6.0.3
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed services
+        id: changed
+        run: |
+          # Handle first push to branch — before SHA is all zeros on branch creation.
+          BEFORE="${{ github.event.before }}"
+          if [[ "$BEFORE" == "0000000000000000000000000000000000000000" ]]; then
+            BEFORE="HEAD~1"
+          fi
+
+          # Extract unique top-level service names from src/ that changed.
+          # Exclude loadgenerator — it is a test harness, not a shippable service.
+          SERVICES=$(git diff --name-only "${BEFORE}" "${{ github.sha }}" | grep '^src/' | cut -d'/' -f2 | sort -u | grep -v '^loadgenerator$' | jq -R -s -c 'split("\n") | map(select(length > 0))')
+
+          echo "Detected services: ${SERVICES}"
+          echo "services=${SERVICES}" >> "$GITHUB_OUTPUT"
+
+          # Emit a boolean flag so downstream if: conditions read cleanly.
+          if [[ "${SERVICES}" == "[]" ]]; then
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ============================================================================
+  # JOB 2 — build-and-push
+  # Fan out one parallel job per changed service via matrix strategy.
+  # Each job calls the reusable build worker which owns build, scan, push.
+  # ============================================================================
+  build-and-push:
+    name: Build · Scan · Push — ${{ matrix.service }}
+    needs: detect-changes
+    if: needs.detect-changes.outputs.has_changes == 'true'
+
+    strategy:
+      fail-fast: false   # service failures are independent — never abort siblings
+      matrix:
+        service: ${{ fromJson(needs.detect-changes.outputs.services) }}
+
+    # Reusable workflows are called at job level — not step level.
+    uses: ./.github/workflows/reusable-build.yaml
+    with:
+      service: ${{ matrix.service }}
+      # cartservice Dockerfile lives in src/cartservice/src/ — every other
+      # service uses src/<service>/ directly. Pass the context override so the
+      # reusable worker does not need repo-specific knowledge baked in.
+      docker_context: ${{ matrix.service == 'cartservice' && 'src/cartservice/src' || format('src/{0}', matrix.service) }}
+      push_image: ${{ github.event_name != 'pull_request' }}
+    secrets: inherit   # forward GITHUB_TOKEN + any repo secrets to the worker
+
+  # ============================================================================
+  # JOB 3 — gitops-update
+  # Runs once after ALL service builds succeed. Writes a single commit to the
+  # CD repo containing updated image tags for every changed service.
+  # Batching into one commit prevents ArgoCD from reconciling N times for an
+  # N-service push — one sync wave, one rollout event.
+  # Skipped on pull_request — never mutate the CD repo on unmerged code.
+  # ============================================================================
+  gitops-update:
+    name: GitOps — Update CD Manifest Tags
+    needs: [detect-changes, build-and-push]
+    if: |
+      needs.detect-changes.outputs.has_changes == 'true' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      github.ref == 'refs/heads/main'
+
+    uses: ./.github/workflows/reusable-gitops.yaml
+    with:
+      services: ${{ needs.detect-changes.outputs.services }}
+      image_tag: sha-${{ github.sha }}
+    secrets: inherit
