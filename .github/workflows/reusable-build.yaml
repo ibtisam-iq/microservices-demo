@@ -39,15 +39,15 @@ on:
   workflow_call:
     inputs:
       service:
-        description: "Service directory name under src/ (e.g. frontend, cartservice)"
+        description: 'Service directory name under src/ (e.g. frontend, cartservice)'
         required: true
         type: string
       docker_context:
-        description: "Docker build context path (relative to repo root)"
+        description: 'Docker build context path (relative to repo root)'
         required: true
         type: string
       push_image:
-        description: "Push image to GHCR after scan. Set false on PR builds."
+        description: 'Push image to GHCR after scan. Set false on PR builds.'
         required: false
         type: boolean
         default: true
@@ -79,7 +79,7 @@ jobs:
       # SonarQube blame requires depth 0; add it if Sonar is enabled per-service.
       # ────────────────────────────────────────────────────────────────────────
       - name: Checkout — source code
-        uses: actions/checkout@v6.0.3
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
 
       # ────────────────────────────────────────────────────────────────────────
       # STAGE 2 — Trivy Filesystem Scan
