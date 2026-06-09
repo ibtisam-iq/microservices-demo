@@ -76,7 +76,7 @@ jobs:
         run: |
           # Handle first push to branch — before SHA is all zeros on branch creation.
           BEFORE="${{ github.event.before }}"
-          if [[ "$BEFORE" == "0000000000000000000000000000000000000000" ]]; then
+          if [[ -z "$BEFORE" || "$BEFORE" == "0000000000000000000000000000000000000000" ]]; then
             BEFORE="HEAD~1"
           fi
 
