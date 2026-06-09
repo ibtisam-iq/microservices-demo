@@ -1,5 +1,5 @@
-# frontend
+# Frontend Service
 
-Run the following command to restore dependencies to `vendor/` directory:
+This is the frontend service for the Online Boutique microservices demo.
 
-    dep ensure --vendor-only
+<!-- ci-trigger: pipeline test -->
