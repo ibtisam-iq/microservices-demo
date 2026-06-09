@@ -110,6 +110,8 @@ jobs:
         service: ${{ fromJson(needs.detect-changes.outputs.services) }}
 
     # Reusable workflows are called at job level — not step level.
+    # push_image is intentionally omitted — reusable-build.yaml defaults it to
+    # true and gates the actual push step on github.event_name internally.
     uses: ./.github/workflows/reusable-build.yaml
     with:
       service: ${{ matrix.service }}
@@ -117,9 +119,6 @@ jobs:
       # service uses src/<service>/ directly. Pass the context override so the
       # reusable worker does not need repo-specific knowledge baked in.
       docker_context: ${{ matrix.service == 'cartservice' && 'src/cartservice/src' || format('src/{0}', matrix.service) }}
-      # fromJSON() casts the expression string to a proper boolean.
-      # workflow_call boolean inputs do not accept raw expression strings.
-      push_image: ${{ fromJSON(github.event_name != 'pull_request') }}
     secrets: inherit   # forward GITHUB_TOKEN + any repo secrets to the worker
 
   # ============================================================================
