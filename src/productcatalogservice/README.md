@@ -30,7 +30,7 @@ kubectl exec \
     -c server -- kill -USR2 1
 ```
 
-## Latency injection
+## Latency injection 
 
 This service has an `EXTRA_LATENCY` environment variable. This will inject a sleep for the specified [time.Duration](https://golang.org/pkg/time/#ParseDuration) on every call to
 to the server.
