@@ -40,11 +40,11 @@ on:
   workflow_call:
     inputs:
       services:
-        description: "JSON array of service names to update (e.g. '["frontend","cartservice"]')"
+        description: 'JSON array of service names, e.g. ["frontend","cartservice"]'
         required: true
         type: string
       image_tag:
-        description: "Image tag to write (e.g. sha-abc1234f…)"
+        description: 'Image tag to write, e.g. sha-abc1234f'
         required: true
         type: string
 
@@ -90,7 +90,7 @@ jobs:
       # ────────────────────────────────────────────────────────────────────────
       # STAGE 3 — Write image tags for all changed services
       # Iterate over the JSON array of services. For each service, write
-      # image.env under systems/microservices-demo/services/<service>/.
+      # image.env under systems/microservices-demo/src/<service>/.
       # A single loop produces all file changes before any git commit is made —
       # ensures the subsequent commit is atomic across all services.
       #
