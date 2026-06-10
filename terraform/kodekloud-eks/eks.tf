@@ -70,8 +70,10 @@ module "eks" {
   # API_AND_CONFIG_MAP keeps both node-join paths available.
   authentication_mode = "API_AND_CONFIG_MAP"
 
-  # Grants the Terraform caller (lab user) cluster-admin automatically
-  enable_cluster_creator_admin_permissions = true
+  # KodeKloud SCP blocks eks:AssociateAccessPolicy. Disabling this
+  # skips the explicit access entry + policy association. The cluster
+  # creator retains implicit admin access in API_AND_CONFIG_MAP mode.
+  enable_cluster_creator_admin_permissions = false
 
   # ---------- Network ----------
   # Private API endpoint only; kubectl goes through bastion
@@ -87,20 +89,23 @@ module "eks" {
   # before_compute = true is irrelevant without managed nodes,
   # but harmless to keep for when self-managed nodes join later.
   addons = {
-    coredns = {
-      most_recent = true
-    }
     kube-proxy = {
       most_recent = true
+      preserve    = true  # eks:DeleteAddon blocked by SCP
     }
     vpc-cni = {
       most_recent    = true
       before_compute = true
+      preserve       = true
     }
     eks-pod-identity-agent = {
       most_recent    = true
       before_compute = true
+      preserve       = true
     }
+    # coredns excluded: Terraform hangs waiting for Active status
+    # until nodes exist. EKS installs it by default, it activates
+    # automatically once self-managed nodes join in Phase 3.
   }
 
   # ---------- NO managed node groups ----------
