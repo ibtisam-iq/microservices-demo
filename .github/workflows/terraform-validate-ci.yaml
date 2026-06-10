@@ -35,3 +35,15 @@ jobs:
           cd terraform/
           terraform init -backend=false
           terraform validate
+
+  # Validates the EKS infrastructure defined in terraform/eks/
+  eks-terraform-validate:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: hashicorp/setup-terraform@v4
+      - name: terraform init & validate
+        run: |
+          cd terraform/eks/
+          terraform init -backend=false
+          terraform validate
