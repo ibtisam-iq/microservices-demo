@@ -48,7 +48,7 @@ jobs:
           terraform init -backend=false
           terraform validate
 
-  # Validates the EKS infrastructure defined in terraform/eks/kodekloud-eks/
+  # Validates the EKS infrastructure defined in terraform/kodekloud-eks/
   kodekloud-eks-terraform-validate:
     runs-on: ubuntu-24.04
     steps:
@@ -56,6 +56,6 @@ jobs:
       - uses: hashicorp/setup-terraform@v4
       - name: terraform init & validate
         run: |
-          cd terraform/eks/kodekloud-eks/
+          cd terraform/kodekloud-eks/
           terraform init -backend=false
           terraform validate          
