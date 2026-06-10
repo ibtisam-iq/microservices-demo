@@ -1,27 +1,34 @@
 # =============================================================================
-# DevSecOps CI — Microservices Trigger
+# DevSecOps CI: Microservices Trigger
 # Repo:    github.com/ibtisam-iq/microservices-demo
-# Pattern: Monorepo matrix dispatch — detect changed services, fan out per
+# Pattern: Monorepo matrix dispatch. Detect changed services, fan out per
 #          service to reusable workers via workflow_call.
 #
 # Design decisions:
 #   - paths: src/** ensures doc/infra changes never burn CI minutes.
-#   - fetch-depth: 0 is mandatory; shallow clones break git diff range.
-#   - ${{ github.event.before }} is empty on the very first push to a branch
-#     (before SHA is 0000…). The fallback HEAD~1 handles that edge case so
-#     the matrix never emits an empty array on branch creation.
+#   - fetch-depth: 0 is mandatory; shallow clones break the git diff range.
+#   - ${{ github.event.before }} is empty on workflow_dispatch and is the all
+#     zeros SHA on the first push to a new branch. The fallback to HEAD~1
+#     handles both cases so the matrix never emits an empty array by accident.
 #   - jq produces a compact JSON array consumed by fromJson() in the matrix.
-#   - fail-fast: false — a broken adservice must not abort a clean frontend
+#   - fail-fast: false. A broken adservice must not abort a clean frontend
 #     build. Each service owns its own blast radius.
 #   - loadgenerator is intentionally excluded from the matrix; it is a test
 #     harness, not a production service, and carries no security gate.
 #
-# Required secrets:  none at this level — workers declare their own.
-# Required permissions: contents:read (checkout), packages:write (GHCR push
-#   delegated to workers), id-token:write delegated to reusable-gitops.yaml.
+# Secrets:
+#   secrets: inherit forwards GITHUB_TOKEN and any repo secrets (incl.
+#   GIT_TOKEN, consumed by reusable-gitops.yaml) to the called workers.
+#
+# Permissions (top level = ceiling for every reusable workflow this calls):
+#   A called reusable workflow can only request permissions at or below what
+#   is granted here. It can narrow, never escalate. reusable-build.yaml needs
+#   packages: write (GHCR push) and security-events: write (Trivy SARIF), so
+#   both must be granted at this level or the run fails at startup. See the
+#   runbook, Phase 7 Bug 3 for the startup failure this caused.
 # =============================================================================
 
-name: DevSecOps CI — Microservices
+name: DevSecOps CI - Microservices
 
 on:
   push:
@@ -36,19 +43,19 @@ on:
   workflow_dispatch:             # manual trigger for re-runs without a dummy commit
 
 # Cancel in-progress runs on the same branch.
-# Safe on PR (no registry side-effects); dangerous on main push mid-push phase.
-# Scope cancel-in-progress to PR only — identical rationale to java-monolith ci.yml.
+# Safe on PR (no registry side effects); dangerous on a main push mid push phase.
+# Scope cancel-in-progress to PR only.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
-  contents: read
+  contents: read           # checkout
   packages: write          # GHCR push (delegated to reusable-build.yaml)
   security-events: write   # Trivy SARIF upload (delegated to reusable-build.yaml)
 
 env:
-  # Registry namespace — all service images live under this prefix.
+  # Registry namespace. All service images live under this prefix.
   # Format: ghcr.io/<owner>/microservices-demo/<service>:<tag>
   REGISTRY: ghcr.io
   IMAGE_NAMESPACE: ${{ github.repository_owner }}/microservices-demo
@@ -56,9 +63,10 @@ env:
 jobs:
 
   # ============================================================================
-  # JOB 1 — detect-changes
+  # JOB 1: detect-changes
   # Emit a JSON array of service directory names whose source changed in this
-  # push. Downstream matrix reads this array; empty array short-circuits build.
+  # push. Downstream matrix reads this array; an empty array short circuits
+  # the build via the has_changes flag.
   # ============================================================================
   detect-changes:
     name: Detect Changed Services
@@ -68,7 +76,7 @@ jobs:
       has_changes: ${{ steps.changed.outputs.has_changes }}
 
     steps:
-      - name: Checkout — full history required for git diff range
+      - name: Checkout - full history required for git diff range
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           fetch-depth: 0
@@ -76,14 +84,16 @@ jobs:
       - name: Detect changed services
         id: changed
         run: |
-          # Handle first push to branch — before SHA is all zeros on branch creation.
+          # Resolve the diff base. github.event.before is empty on
+          # workflow_dispatch and all zeros on first push to a new branch.
+          # Both fall back to HEAD~1 so the git diff range is always valid.
           BEFORE="${{ github.event.before }}"
           if [[ -z "$BEFORE" || "$BEFORE" == "0000000000000000000000000000000000000000" ]]; then
             BEFORE="HEAD~1"
           fi
 
-          # Extract unique top-level service names from src/ that changed.
-          # Exclude loadgenerator — it is a test harness, not a shippable service.
+          # Extract unique top level service names from src/ that changed.
+          # Exclude loadgenerator; it is a test harness, not a shippable service.
           SERVICES=$(git diff --name-only "${BEFORE}" "${{ github.sha }}" | grep '^src/' | cut -d'/' -f2 | sort -u | grep -v '^loadgenerator$' | jq -R -s -c 'split("\n") | map(select(length > 0))')
 
           echo "Detected services: ${SERVICES}"
@@ -97,42 +107,42 @@ jobs:
           fi
 
   # ============================================================================
-  # JOB 2 — build-and-push
-  # Fan out one parallel job per changed service via matrix strategy.
-  # Each job calls the reusable build worker which owns build, scan, push.
+  # JOB 2: build-and-push
+  # Fan out one parallel job per changed service via the matrix strategy.
+  # Each job calls the reusable build worker which owns build, scan, and push.
   # ============================================================================
   build-and-push:
-    name: Build · Scan · Push — ${{ matrix.service }}
+    name: Build · Scan · Push - ${{ matrix.service }}
     needs: detect-changes
     if: needs.detect-changes.outputs.has_changes == 'true'
 
     strategy:
-      fail-fast: false   # service failures are independent — never abort siblings
+      fail-fast: false   # service failures are independent; never abort siblings
       matrix:
         service: ${{ fromJson(needs.detect-changes.outputs.services) }}
 
-    # Reusable workflows are called at job level — not step level.
-    # push_image is intentionally omitted — reusable-build.yaml defaults it to
-    # true and gates the actual push step on github.event_name internally.
+    # Reusable workflows are called at job level, not step level.
+    # push_image is intentionally not passed here. reusable-build.yaml defaults
+    # it to true; Job 3's if: condition is what prevents CD writes on PRs.
     uses: ./.github/workflows/reusable-build.yaml
     with:
       service: ${{ matrix.service }}
-      # cartservice Dockerfile lives in src/cartservice/src/ — every other
+      # cartservice Dockerfile lives in src/cartservice/src/; every other
       # service uses src/<service>/ directly. Pass the context override so the
-      # reusable worker does not need repo-specific knowledge baked in.
+      # reusable worker does not need repo specific knowledge baked in.
       docker_context: ${{ matrix.service == 'cartservice' && 'src/cartservice/src' || format('src/{0}', matrix.service) }}
     secrets: inherit   # forward GITHUB_TOKEN + any repo secrets to the worker
 
   # ============================================================================
-  # JOB 3 — gitops-update
+  # JOB 3: gitops-update
   # Runs once after ALL service builds succeed. Writes a single commit to the
   # CD repo containing updated image tags for every changed service.
   # Batching into one commit prevents ArgoCD from reconciling N times for an
-  # N-service push — one sync wave, one rollout event.
-  # Skipped on pull_request — never mutate the CD repo on unmerged code.
+  # N service push: one sync wave, one rollout event.
+  # Skipped on pull_request; never mutate the CD repo on unmerged code.
   # ============================================================================
   gitops-update:
-    name: GitOps — Update CD Manifest Tags
+    name: GitOps - Update CD Manifest Tags
     needs: [detect-changes, build-and-push]
     if: |
       needs.detect-changes.outputs.has_changes == 'true' &&
@@ -144,3 +154,4 @@ jobs:
       services: ${{ needs.detect-changes.outputs.services }}
       image_tag: sha-${{ github.sha }}
     secrets: inherit
+    
