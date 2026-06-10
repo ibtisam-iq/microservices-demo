@@ -28,34 +28,34 @@ output "public_subnet_ids" {
 
 output "cluster_name" {
   description = "Name of the EKS cluster"
-  value       = module.eks.cluster_name
+  value       = aws_eks_cluster.this.name
 }
 
 output "cluster_endpoint" {
   description = "HTTPS endpoint of the EKS API server (private)"
-  value       = module.eks.cluster_endpoint
+  value       = aws_eks_cluster.this.endpoint
 }
 
 output "cluster_certificate_authority_data" {
   description = "Base64-encoded CA certificate, used in kubeconfig"
-  value       = module.eks.cluster_certificate_authority_data
+  value       = aws_eks_cluster.this.certificate_authority[0].data
   sensitive   = true
 }
 
 output "cluster_oidc_issuer_url" {
-  description = "OIDC issuer URL, needed for IRSA (IAM Roles for Service Accounts)"
-  value       = module.eks.cluster_oidc_issuer_url
+  description = "OIDC issuer URL, needed for IRSA"
+  value       = aws_eks_cluster.this.identity[0].oidc[0].issuer
 }
 
 output "kubeconfig_command" {
-  description = "Run this command on the bastion host to configure kubectl"
-  value       = "aws eks update-kubeconfig --region ${data.aws_region.current.region} --name ${module.eks.cluster_name}"
+  description = "Run this on the bastion host to configure kubectl"
+  value       = "aws eks update-kubeconfig --region ${data.aws_region.current.name} --name ${aws_eks_cluster.this.name}"
 }
 
-# ---- IAM (for Phase 3: self-managed nodes) -----------------
+# ---- IAM (Phase 3: self-managed nodes) ---------------------
 
 output "eks_node_role_arn" {
-  description = "ARN of eksNodeRole, needed when launching self-managed node CF stack"
+  description = "ARN of eksNodeRole, needed for the CF self-managed node stack"
   value       = aws_iam_role.eks_node_role.arn
 }
 
@@ -85,5 +85,5 @@ output "aws_account_id" {
 
 output "aws_region" {
   description = "AWS region resources were deployed into"
-  value       = data.aws_region.current.region
+  value       = data.aws_region.current.name
 }

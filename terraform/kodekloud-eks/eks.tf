@@ -1,18 +1,23 @@
 # ============================================================
-# eks.tf - EKS cluster (control plane only, no managed nodes)
-# Module: terraform-aws-modules/eks/aws  ~> 21.0
+# eks.tf - EKS cluster using raw AWS resources
 # ============================================================
-# KodeKloud SCP constraints addressed:
-#   1. iam:PassRole only works for "eksClusterRole" / "eksNodeRole"
-#      -> create_iam_role = false, point to pre-created eksClusterRole
-#   2. iam:TagPolicy blocked -> encryption_config = null, create_kms_key = false
-#   3. eks:CreateNodegroup blocked unconditionally
-#      -> eks_managed_node_groups removed; use self-managed nodes (Phase 3)
-#   4. logs:DeleteLogGroup blocked -> create_cloudwatch_log_group = false
-#      (EKS creates the log group itself; Terraform just won't manage it)
+# Why not terraform-aws-modules/eks/aws?
+#   The module v21.x silently drops bootstrap_cluster_creator_admin_permissions
+#   when create_iam_role = false, leaving the cluster with no admin access.
+#   Using raw resources gives direct, transparent control over every field
+#   passed to the AWS API — no module abstraction in the way.
+#
+# KodeKloud SCP constraints handled:
+#   1. iam:PassRole: eksClusterRole (whitelisted name) used via iam-eks.tf
+#   2. iam:TagPolicy: no KMS encryption, no encryption IAM policy
+#   3. eks:CreateNodegroup: no managed node groups; self-managed via CF (Phase 3)
+#   4. logs:DeleteLogGroup: EKS manages its own log group, not Terraform
+#   5. eks:AssociateAccessPolicy: avoided via bootstrapClusterCreatorAdminPermissions
+#   6. eks:DeleteAddon: preserve = true on all addons
 # ============================================================
 
-# Additional security group: allow bastion to reach EKS API (port 443)
+# ---- Security group: bastion to EKS API (port 443) ---------
+
 resource "aws_security_group" "eks_additional" {
   name        = "${var.project_name}-eks-additional-sg"
   description = "Allow bastion host to reach EKS API on port 443"
@@ -39,81 +44,85 @@ resource "aws_security_group" "eks_additional" {
   }
 }
 
-module "eks" {
-  source  = "terraform-aws-modules/eks/aws"
-  version = "~> 21.0"
+# ---- EKS cluster -------------------------------------------
 
-  name               = "${var.project_name}-eks"
-  kubernetes_version = var.kubernetes_version
+resource "aws_eks_cluster" "this" {
+  name     = "${var.project_name}-eks"
+  role_arn = aws_iam_role.eks_cluster_role.arn
+  version  = var.kubernetes_version
 
-  # ---------- IAM Role ----------
-  # The module's auto-generated role name triggers iam:PassRole denial.
-  # KodeKloud SCP only whitelists "eksClusterRole" exactly.
-  create_iam_role = false
-  iam_role_arn    = aws_iam_role.eks_cluster_role.arn
-
-  # ---------- Encryption ----------
-  # Setting to null makes enable_encryption_config = false inside the module,
-  # which skips the entire encryption_config block on aws_eks_cluster.
-  # This avoids both the missing key_arn error and the iam:TagPolicy denial.
-  encryption_config        = null
-  create_kms_key           = false
-  attach_encryption_policy = false
-
-  # ---------- CloudWatch ----------
-  # logs:DeleteLogGroup is blocked by the SCP. If Terraform manages the
-  # log group, terraform destroy will fail. Letting EKS create its own
-  # log group (unmanaged by Terraform) avoids the problem entirely.
-  create_cloudwatch_log_group = false
-
-  # ---------- Auth ----------
-  # API_AND_CONFIG_MAP keeps both node-join paths available.
-  authentication_mode = "API_AND_CONFIG_MAP"
-
-  # KodeKloud SCP blocks eks:AssociateAccessPolicy. Disabling this
-  # skips the explicit access entry + policy association. The cluster
-  # creator retains implicit admin access in API_AND_CONFIG_MAP mode.
-  enable_cluster_creator_admin_permissions = false
-
-  # ---------- Network ----------
-  # Private API endpoint only; kubectl goes through bastion
-  endpoint_public_access  = false
-  endpoint_private_access = true
-
-  vpc_id     = module.vpc.vpc_id
-  subnet_ids = module.vpc.private_subnets
-
-  additional_security_group_ids = [aws_security_group.eks_additional.id]
-
-  # ---------- Addons ----------
-  # before_compute = true is irrelevant without managed nodes,
-  # but harmless to keep for when self-managed nodes join later.
-  addons = {
-    kube-proxy = {
-      most_recent = true
-      preserve    = true  # eks:DeleteAddon blocked by SCP
-    }
-    vpc-cni = {
-      most_recent    = true
-      before_compute = true
-      preserve       = true
-    }
-    eks-pod-identity-agent = {
-      most_recent    = true
-      before_compute = true
-      preserve       = true
-    }
-    # coredns excluded: Terraform hangs waiting for Active status
-    # until nodes exist. EKS installs it by default, it activates
-    # automatically once self-managed nodes join in Phase 3.
+  vpc_config {
+    subnet_ids              = module.vpc.private_subnets
+    endpoint_private_access = true
+    endpoint_public_access  = false
+    security_group_ids      = [aws_security_group.eks_additional.id]
   }
 
-  # ---------- NO managed node groups ----------
-  # eks:CreateNodegroup is blocked unconditionally by the KodeKloud SCP.
-  # Worker nodes are provisioned as self-managed (Phase 3 in the runbook)
-  # via the AWS CloudFormation EKS node template after terraform apply.
+  access_config {
+    authentication_mode = "API_AND_CONFIG_MAP"
+
+    # Directly passes bootstrapClusterCreatorAdminPermissions = true to the
+    # AWS API at cluster creation time. EKS handles the admin access entry
+    # internally — no eks:AssociateAccessPolicy call is made. This is the
+    # only reliable way to get kubectl access under KodeKloud SCP constraints.
+    bootstrap_cluster_creator_admin_permissions = true
+  }
+
+  depends_on = [aws_iam_role_policy_attachment.eks_cluster_policy]
+}
+
+# ---- OIDC provider (for IRSA) ------------------------------
+
+data "tls_certificate" "eks" {
+  url = aws_eks_cluster.this.identity[0].oidc[0].issuer
+}
+
+resource "aws_iam_openid_connect_provider" "eks" {
+  client_id_list  = ["sts.amazonaws.com"]
+  thumbprint_list = [data.tls_certificate.eks.certificates[0].sha1_fingerprint]
+  url             = aws_eks_cluster.this.identity[0].oidc[0].issuer
 
   tags = {
-    Name = "${var.project_name}-eks"
+    Name = "${var.project_name}-eks-oidc"
   }
 }
+
+# ---- Addons ------------------------------------------------
+# preserve = true: eks:DeleteAddon is blocked by the KodeKloud SCP.
+# Terraform abandons these resources in state on destroy without calling
+# the AWS API, avoiding AccessDeniedException on terraform destroy.
+
+resource "aws_eks_addon" "vpc_cni" {
+  cluster_name                = aws_eks_cluster.this.name
+  addon_name                  = "vpc-cni"
+  resolve_conflicts_on_create = "OVERWRITE"
+  preserve                    = true
+}
+
+resource "aws_eks_addon" "kube_proxy" {
+  cluster_name                = aws_eks_cluster.this.name
+  addon_name                  = "kube-proxy"
+  resolve_conflicts_on_create = "OVERWRITE"
+  preserve                    = true
+}
+
+resource "aws_eks_addon" "pod_identity_agent" {
+  cluster_name                = aws_eks_cluster.this.name
+  addon_name                  = "eks-pod-identity-agent"
+  resolve_conflicts_on_create = "OVERWRITE"
+  preserve                    = true
+}
+
+# CoreDNS is intentionally excluded from Terraform management.
+# aws_eks_addon for coredns waits up to 20 minutes for Active status,
+# but CoreDNS stays Degraded until worker nodes exist to schedule its
+# pods — terraform apply would hang and eventually time out on a fresh
+# cluster with no nodes. EKS installs CoreDNS automatically as a
+# built-in Kubernetes deployment; it becomes Running on its own once
+# self-managed nodes join the cluster in Phase 3. No Terraform resource
+# is needed and no manual step is required.
+
+# ---- NO managed node groups -------------------------------------
+# eks:CreateNodegroup is blocked unconditionally by the KodeKloud SCP.
+# Worker nodes are provisioned as self-managed (Phase 3 in the runbook)
+# via the AWS CloudFormation EKS node template after terraform apply.
