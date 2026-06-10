@@ -49,7 +49,7 @@ output "cluster_oidc_issuer_url" {
 
 output "kubeconfig_command" {
   description = "Run this command on the bastion host to configure kubectl"
-  value       = "aws eks update-kubeconfig --region ${data.aws_region.current.name} --name ${module.eks.cluster_name}"
+  value       = "aws eks update-kubeconfig --region ${data.aws_region.current.region} --name ${module.eks.cluster_name}"
 }
 
 # ---- Bastion -----------------------------------------------
@@ -78,5 +78,5 @@ output "aws_account_id" {
 
 output "aws_region" {
   description = "AWS region resources were deployed into"
-  value       = data.aws_region.current.name
+  value       = data.aws_region.current.region
 }

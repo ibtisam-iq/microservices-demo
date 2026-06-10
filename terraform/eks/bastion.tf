@@ -2,17 +2,6 @@
 # bastion.tf — bastion host, SSH key pair, security group
 # Module: terraform-aws-modules/ec2-instance/aws  v6.4.0
 # ============================================================
-# Improvements over instructor baseline:
-#  • Ubuntu 26.04 (Noble) AMI via data.tf filter using Canonical
-#    owner 099720109477 with hvm-ssd-gp3/ubuntu-resolute-26.04 pattern
-#    (matches your exact aws ec2 describe-images command)
-#  • Key name from variable — not hardcoded
-#  • IMDSv2 enforced (http_tokens = required) — security hardening
-#  • Metadata hop limit = 2 (needed if kubectl runs inside a container
-#    on the bastion itself)
-#  • EBS root volume encrypted at rest
-#  • Instance name from var.project_name
-# ============================================================
 
 # ---- SSH key pair ------------------------------------------
 
@@ -45,7 +34,7 @@ resource "aws_security_group" "bastion_sg" {
   vpc_id      = module.vpc.vpc_id
 
   ingress {
-    description = "SSH from operator's current public IP"
+    description = "SSH from operators current public IP"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
@@ -53,7 +42,7 @@ resource "aws_security_group" "bastion_sg" {
   }
 
   egress {
-    description = "Allow all outbound (kubectl, apt, etc.)"
+    description = "Allow all outbound"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
@@ -87,8 +76,8 @@ module "bastion" {
   # IMDSv2 required — prevents SSRF-based metadata attacks
   metadata_options = {
     http_endpoint               = "enabled"
-    http_tokens                 = "required"   # IMDSv2
-    http_put_response_hop_limit = 2            # needed if kubectl runs in a container on bastion
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 2
   }
 
   # Encrypted root volume
