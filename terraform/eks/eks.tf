@@ -1,25 +1,12 @@
 # ============================================================
-# eks.tf — EKS cluster + managed node group
+# eks.tf - EKS cluster + managed node group
 # Module: terraform-aws-modules/eks/aws  v21.23.0
 # ============================================================
-# Improvements over instructor baseline:
-#  • Cluster name from var.project_name — no hardcoded "terraform-cluster"
-#  • kubernetes_version from variable (set to 1.35)
-#  • authentication_mode = "API_AND_CONFIG_MAP" (both auth modes active)
-#    — allows both aws-auth ConfigMap and Access Entry API simultaneously
-#  • endpoint_public_access = false (private API — access only via bastion)
-#  • Bastion SG allowed to reach port 443 on the cluster SG
-#  • instance_types = ["t3.medium"] per requirement
-#  • node_repair_config enabled — auto-replaces unhealthy nodes
-#  • Core addons: coredns, kube-proxy, vpc-cni, eks-pod-identity-agent
-#  • enable_cluster_creator_admin_permissions = true so the Terraform
-#    caller can immediately run kubectl without extra access entry setup
-# ============================================================
 
-# Additional security group: allow bastion → EKS API (port 443)
+# Additional security group: allow bastion to reach EKS API (port 443)
 resource "aws_security_group" "eks_additional" {
   name        = "${var.project_name}-eks-additional-sg"
-  description = "Additional SG — allows bastion host to reach EKS API"
+  description = "Allow bastion host to reach EKS API on port 443"
   vpc_id      = module.vpc.vpc_id
 
   ingress {
@@ -50,34 +37,24 @@ module "eks" {
   name               = "${var.project_name}-eks"
   kubernetes_version = var.kubernetes_version
 
-  # ----------------------------------------------------------
-  # Authentication mode
-  # API_AND_CONFIG_MAP = both the new Access Entry API and the
-  # legacy aws-auth ConfigMap remain active. This is the safest
-  # migration path and required for tools that still write
-  # aws-auth (e.g. older versions of eksctl).
-  # ----------------------------------------------------------
+  # API_AND_CONFIG_MAP: both the Access Entry API and the legacy
+  # aws-auth ConfigMap remain active simultaneously.
   authentication_mode = "API_AND_CONFIG_MAP"
 
   # Grants the Terraform IAM identity cluster-admin automatically
   enable_cluster_creator_admin_permissions = true
 
-  # Private API endpoint — kubectl traffic goes through bastion
+  # Private API endpoint - kubectl traffic goes through bastion
   endpoint_public_access  = false
   endpoint_private_access = true
 
   vpc_id     = module.vpc.vpc_id
   subnet_ids = module.vpc.private_subnets
 
-  # Attach the bastion-facing additional SG to the cluster
   additional_security_group_ids = [aws_security_group.eks_additional.id]
 
-  # ----------------------------------------------------------
-  # Core add-ons
   # before_compute = true ensures vpc-cni and pod-identity-agent
-  # are installed before any worker nodes join, preventing a
-  # race condition where pods schedule before CNI is ready.
-  # ----------------------------------------------------------
+  # are installed before any worker nodes join.
   addons = {
     coredns = {
       most_recent = true
@@ -95,26 +72,19 @@ module "eks" {
     }
   }
 
-  # ----------------------------------------------------------
-  # Managed node group
-  # ----------------------------------------------------------
   eks_managed_node_groups = {
     general = {
-      # AL2023 is the default AMI from EKS 1.30+ (replaces AL2)
-      ami_type = "AL2023_x86_64_STANDARD"
-
-      instance_types = var.node_instance_types # ["t3.medium"]
+      ami_type       = "AL2023_x86_64_STANDARD"
+      instance_types = var.node_instance_types
 
       min_size     = var.node_min_size
       max_size     = var.node_max_size
       desired_size = var.node_desired_size
 
-      # Node auto-repair: EKS replaces nodes that fail health checks
       node_repair_config = {
         enabled = true
       }
 
-      # Update strategy: replace at most 33% of nodes at once
       update_config = {
         max_unavailable_percentage = 33
       }
