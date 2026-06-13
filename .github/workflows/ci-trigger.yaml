@@ -26,6 +26,12 @@
 #   packages: write (GHCR push) and security-events: write (Trivy SARIF), so
 #   both must be granted at this level or the run fails at startup. See the
 #   runbook, Phase 7 Bug 3 for the startup failure this caused.
+#
+# Short SHA note:
+#   short_sha is computed once in detect-changes (bash substring ${GITHUB_SHA:0:7})
+#   and surfaced as a job output. gitops-update consumes it as
+#   needs.detect-changes.outputs.short_sha so the CD repo image.env stays
+#   consistent with the :sha-<7char> tag pushed to GHCR by reusable-build.yaml.
 # =============================================================================
 
 name: DevSecOps CI - Microservices
@@ -67,6 +73,8 @@ jobs:
   # Emit a JSON array of service directory names whose source changed in this
   # push. Downstream matrix reads this array; an empty array short circuits
   # the build via the has_changes flag.
+  # Also emits short_sha (first 7 chars of github.sha) for use by gitops-update.
+  # GHA expressions do not support string slicing, so bash substring is used.
   # ============================================================================
   detect-changes:
     name: Detect Changed Services
@@ -74,6 +82,7 @@ jobs:
     outputs:
       services: ${{ steps.changed.outputs.services }}
       has_changes: ${{ steps.changed.outputs.has_changes }}
+      short_sha: ${{ steps.changed.outputs.short_sha }}
 
     steps:
       - name: Checkout - full history required for git diff range
@@ -105,6 +114,10 @@ jobs:
           else
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
           fi
+
+          # Emit short SHA (7 chars). GHA expressions do not support [0:7]
+          # slicing, so bash substring is used here and surfaced as an output.
+          echo "short_sha=${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
 
   # ============================================================================
   # JOB 2: build-and-push
@@ -140,6 +153,11 @@ jobs:
   # Batching into one commit prevents ArgoCD from reconciling N times for an
   # N service push: one sync wave, one rollout event.
   # Skipped on pull_request; never mutate the CD repo on unmerged code.
+  #
+  # image_tag uses the short SHA (sha-<7char>) so image.env in the CD repo
+  # matches the :sha-<7char> tag pushed to GHCR by reusable-build.yaml.
+  # The full :sha-<40char> tag also exists in GHCR (IMAGE_REF) but the short
+  # form is what ArgoCD Image Updater tracks and what humans read in the CD log.
   # ============================================================================
   gitops-update:
     name: GitOps - Update CD Manifest Tags
@@ -152,6 +170,5 @@ jobs:
     uses: ./.github/workflows/reusable-gitops.yaml
     with:
       services: ${{ needs.detect-changes.outputs.services }}
-      image_tag: sha-${{ github.sha }}
+      image_tag: sha-${{ needs.detect-changes.outputs.short_sha }}
     secrets: inherit
-    
