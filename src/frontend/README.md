@@ -1,4 +1,4 @@
-# Frontend Service
+# Frontend Service 
 
 This is the frontend service for the Online Boutique microservices demo. 
 
