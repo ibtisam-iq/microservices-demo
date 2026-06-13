@@ -48,6 +48,12 @@
 #     :sha-<40char>  — full commit SHA, immutable, used by GitOps (reusable-gitops.yaml)
 #     :sha-<7char>   — short commit SHA, human-readable, used by ArgoCD Image Updater
 #     :latest        — mutable convenience tag for local dev and manual pulls
+#
+# Short SHA note:
+#   GitHub Actions expression syntax does not support string slicing ([0:7]).
+#   IMAGE_SHORT is computed in a dedicated bash step (Stage 0) using the
+#   shell substring ${GITHUB_SHA:0:7} and exported via GITHUB_ENV so all
+#   subsequent steps can reference it as ${{ env.IMAGE_SHORT }}.
 # =============================================================================
 
 name: Reusable - Build · Scan · Push
@@ -84,13 +90,25 @@ jobs:
     env:
       # Canonical image references used across all steps in this job.
       # IMAGE_REF:   full 40-char SHA tag — immutable, traceable, used by GitOps.
-      # IMAGE_SHORT: 7-char short SHA tag — human-readable, used by ArgoCD Image Updater.
       # IMAGE_LATEST: mutable convenience tag for local dev and manual pulls.
+      # IMAGE_SHORT: 7-char short SHA tag — computed in Stage 0 via bash and
+      #              exported to GITHUB_ENV. Cannot use expression [0:7] syntax
+      #              here; GHA expressions do not support string slicing.
       IMAGE_REF: ghcr.io/${{ github.repository_owner }}/microservices-demo/${{ inputs.service }}:sha-${{ github.sha }}
-      IMAGE_SHORT: ghcr.io/${{ github.repository_owner }}/microservices-demo/${{ inputs.service }}:sha-${{ github.sha[0:7] }}
       IMAGE_LATEST: ghcr.io/${{ github.repository_owner }}/microservices-demo/${{ inputs.service }}:latest
 
     steps:
+
+      # ────────────────────────────────────────────────────────────────────────
+      # STAGE 0: Compute short SHA
+      # GHA expressions do not support string slicing. Use bash substring
+      # syntax ${GITHUB_SHA:0:7} and write to GITHUB_ENV so all later steps
+      # can reference it as ${{ env.IMAGE_SHORT }}.
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Compute short SHA
+        run: |
+          SHORT_SHA="${GITHUB_SHA:0:7}"
+          echo "IMAGE_SHORT=ghcr.io/${{ github.repository_owner }}/microservices-demo/${{ inputs.service }}:sha-${SHORT_SHA}" >> "$GITHUB_ENV"
 
       # ────────────────────────────────────────────────────────────────────────
       # STAGE 1: Checkout
@@ -171,6 +189,8 @@ jobs:
       # fall back to run_started_at.
       # All three tags (full SHA, short SHA, latest) are applied at build time
       # so all three are available in the local daemon for scan and push.
+      # IMAGE_SHORT is available here because Stage 0 already wrote it to
+      # GITHUB_ENV before this step runs.
       # ────────────────────────────────────────────────────────────────────────
       - name: Docker Build - load into daemon (scan before push)
         uses: docker/build-push-action@v6.15.0
