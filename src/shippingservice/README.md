@@ -8,7 +8,7 @@ Run the following command to restore dependencies to `vendor/` directory:
 
     dep ensure --vendor-only
 
-## Build
+## Build 
 
 From `src/shippingservice`, run:
 

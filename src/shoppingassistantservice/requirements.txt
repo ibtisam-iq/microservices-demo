@@ -8,7 +8,7 @@ anyio==4.10.0
     # via
     #   google-genai
     #   httpx
-asyncpg==0.30.0
+asyncpg==0.30.0 
     # via
     #   google-cloud-alloydb-connector
     #   langchain-postgres
