@@ -42,6 +42,12 @@
 #   docker_context is passed by the caller (ci-trigger.yaml). cartservice
 #   Dockerfile lives in src/cartservice/src/, not src/cartservice/. The
 #   reusable worker stays generic; the caller owns the context routing logic.
+#
+# Image tags:
+#   Three tags are pushed per service per build:
+#     :sha-<40char>  — full commit SHA, immutable, used by GitOps (reusable-gitops.yaml)
+#     :sha-<7char>   — short commit SHA, human-readable, used by ArgoCD Image Updater
+#     :latest        — mutable convenience tag for local dev and manual pulls
 # =============================================================================
 
 name: Reusable - Build · Scan · Push
@@ -77,10 +83,11 @@ jobs:
 
     env:
       # Canonical image references used across all steps in this job.
-      # The versioned tag is the full 40 character commit SHA prefixed with
-      # "sha-". It is immutable and traceable to an exact commit. :latest is
-      # for local development convenience and manual pulls.
+      # IMAGE_REF:   full 40-char SHA tag — immutable, traceable, used by GitOps.
+      # IMAGE_SHORT: 7-char short SHA tag — human-readable, used by ArgoCD Image Updater.
+      # IMAGE_LATEST: mutable convenience tag for local dev and manual pulls.
       IMAGE_REF: ghcr.io/${{ github.repository_owner }}/microservices-demo/${{ inputs.service }}:sha-${{ github.sha }}
+      IMAGE_SHORT: ghcr.io/${{ github.repository_owner }}/microservices-demo/${{ inputs.service }}:sha-${{ github.sha[0:7] }}
       IMAGE_LATEST: ghcr.io/${{ github.repository_owner }}/microservices-demo/${{ inputs.service }}:latest
 
     steps:
@@ -162,6 +169,8 @@ jobs:
       # stages run. OCI labels follow the opencontainers image spec for
       # traceability. head_commit.timestamp is null on workflow_dispatch, so
       # fall back to run_started_at.
+      # All three tags (full SHA, short SHA, latest) are applied at build time
+      # so all three are available in the local daemon for scan and push.
       # ────────────────────────────────────────────────────────────────────────
       - name: Docker Build - load into daemon (scan before push)
         uses: docker/build-push-action@v6.15.0
@@ -171,6 +180,7 @@ jobs:
           load: true
           tags: |
             ${{ env.IMAGE_REF }}
+            ${{ env.IMAGE_SHORT }}
             ${{ env.IMAGE_LATEST }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
@@ -237,14 +247,16 @@ jobs:
       # ────────────────────────────────────────────────────────────────────────
       # STAGE 7: Push to GHCR
       # Runs only when push_image=true (skipped on PR builds via the caller's
-      # gating). Both the versioned tag and :latest are pushed. The image is
-      # already in the local daemon from Stage 5 (load: true), so docker push
-      # reuses those layers with no rebuild.
+      # gating). All three tags are pushed: full SHA (immutable/GitOps),
+      # short SHA (ArgoCD Image Updater friendly), and latest (convenience).
+      # The image is already in the local daemon from Stage 5 (load: true),
+      # so docker push reuses those layers with no rebuild.
       # ────────────────────────────────────────────────────────────────────────
-      - name: Push to GHCR - versioned + latest tags
+      - name: Push to GHCR - versioned + short SHA + latest tags
         if: inputs.push_image == true
         run: |
           docker push ${{ env.IMAGE_REF }}
+          docker push ${{ env.IMAGE_SHORT }}
           docker push ${{ env.IMAGE_LATEST }}
 
       # ────────────────────────────────────────────────────────────────────────
@@ -256,6 +268,6 @@ jobs:
       - name: Cleanup - remove local Docker images
         if: always()
         run: |
-          docker rmi ${{ env.IMAGE_REF }}  || true
+          docker rmi ${{ env.IMAGE_REF }}   || true
+          docker rmi ${{ env.IMAGE_SHORT }}  || true
           docker rmi ${{ env.IMAGE_LATEST }} || true
-          
