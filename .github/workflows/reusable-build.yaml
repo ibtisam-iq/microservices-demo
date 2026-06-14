@@ -8,6 +8,14 @@
 #   3. Trivy image scan: security gate on the built image
 #   4. Push to GHCR: conditional on the push_image input (skipped on PR)
 #
+# Image Updater integration:
+#   After images land in GHCR, ArgoCD Image Updater detects new digests and
+#   updates the running deployments. CI does not touch the CD repo. The three
+#   tags pushed here serve different consumers:
+#     :sha-<40char>  -- immutable audit trail, traceable to exact commit
+#     :sha-<7char>   -- human-readable, visible in ArgoCD UI and CD logs
+#     :latest        -- Image Updater tracks this tag's digest for updates
+#
 # Security posture:
 #   - FS scan: advisory, exit-code 0. Catches low hanging secrets early.
 #   - Image scan OS packages: exit-code 0. Vendor's responsibility, warn only.
@@ -42,12 +50,6 @@
 #   docker_context is passed by the caller (ci-trigger.yaml). cartservice
 #   Dockerfile lives in src/cartservice/src/, not src/cartservice/. The
 #   reusable worker stays generic; the caller owns the context routing logic.
-#
-# Image tags:
-#   Three tags are pushed per service per build:
-#     :sha-<40char>  — full commit SHA, immutable, used by GitOps (reusable-gitops.yaml)
-#     :sha-<7char>   — short commit SHA, human-readable, used by ArgoCD Image Updater
-#     :latest        — mutable convenience tag for local dev and manual pulls
 #
 # Short SHA note:
 #   GitHub Actions expression syntax does not support string slicing ([0:7]).
@@ -89,11 +91,10 @@ jobs:
 
     env:
       # Canonical image references used across all steps in this job.
-      # IMAGE_REF:   full 40-char SHA tag — immutable, traceable, used by GitOps.
-      # IMAGE_LATEST: mutable convenience tag for local dev and manual pulls.
-      # IMAGE_SHORT: 7-char short SHA tag — computed in Stage 0 via bash and
-      #              exported to GITHUB_ENV. Cannot use expression [0:7] syntax
-      #              here; GHA expressions do not support string slicing.
+      # IMAGE_REF:    full 40-char SHA tag, immutable, audit trail.
+      # IMAGE_LATEST: mutable tag tracked by ArgoCD Image Updater.
+      # IMAGE_SHORT:  7-char short SHA, computed in Stage 0 via bash and
+      #               exported to GITHUB_ENV. Human-readable in ArgoCD UI.
       IMAGE_REF: ghcr.io/${{ github.repository_owner }}/microservices-demo/${{ inputs.service }}:sha-${{ github.sha }}
       IMAGE_LATEST: ghcr.io/${{ github.repository_owner }}/microservices-demo/${{ inputs.service }}:latest
 
@@ -168,9 +169,8 @@ jobs:
 
       # ────────────────────────────────────────────────────────────────────────
       # STAGE 4: GHCR Login
-      # Login is NOT gated to push_image=true. The Trivy image scan (Stage 6)
-      # reads the just built image from the local daemon, but the GHA cache
-      # backend (cache-from) may need authenticated pulls from GHCR to restore
+      # Login is NOT gated to push_image=true. The GHA cache backend
+      # (cache-from) may need authenticated pulls from GHCR to restore
       # cached layers from previous runs. Login must precede the build step.
       # ────────────────────────────────────────────────────────────────────────
       - name: Login to GHCR
@@ -218,9 +218,6 @@ jobs:
       #           Currently exit-code 0, a deliberate temporary relaxation
       #           (see the header block). Restore "1" to enforce the gate.
       #   Pass C: library HIGH/MEDIUM, advisory, upload JSON artifact.
-      # Pass B has no if: always(). If Stage 5 failed there is no image in the
-      # daemon to scan, and a misleading "image not found" error on top of a
-      # real build failure would obscure the root cause.
       # ────────────────────────────────────────────────────────────────────────
       - name: Trivy - image scan OS packages (advisory)
         uses: aquasecurity/trivy-action@v0.24.0
@@ -266,13 +263,11 @@ jobs:
 
       # ────────────────────────────────────────────────────────────────────────
       # STAGE 7: Push to GHCR
-      # Runs only when push_image=true (skipped on PR builds via the caller's
-      # gating). All three tags are pushed: full SHA (immutable/GitOps),
-      # short SHA (ArgoCD Image Updater friendly), and latest (convenience).
-      # The image is already in the local daemon from Stage 5 (load: true),
-      # so docker push reuses those layers with no rebuild.
+      # All three tags are pushed. After landing in GHCR, ArgoCD Image Updater
+      # detects the new digest behind :latest and rolls the deployment.
+      # CI's job ends here; no CD repo write needed.
       # ────────────────────────────────────────────────────────────────────────
-      - name: Push to GHCR - versioned + short SHA + latest tags
+      - name: Push to GHCR - SHA + short SHA + latest tags
         if: inputs.push_image == true
         run: |
           docker push ${{ env.IMAGE_REF }}

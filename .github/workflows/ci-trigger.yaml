@@ -4,8 +4,15 @@
 # Pattern: Monorepo matrix dispatch. Detect changed services, fan out per
 #          service to reusable workers via workflow_call.
 #
+# Scope:
+#   This workflow owns container images only: build, scan, push to GHCR.
+#   It does NOT touch the CD repo (platform-engineering-systems).
+#   ArgoCD Image Updater watches GHCR and handles deployment of new images.
+#   Chart releases (packaging, publishing, CD repo version bumps) are owned
+#   by chart-release.yaml, which triggers independently on helm-chart/ changes.
+#
 # Design decisions:
-#   - paths: src/** ensures doc/infra changes never burn CI minutes.
+#   - paths: src/** ensures doc/infra/chart changes never burn CI minutes.
 #   - fetch-depth: 0 is mandatory; shallow clones break the git diff range.
 #   - ${{ github.event.before }} is empty on workflow_dispatch and is the all
 #     zeros SHA on the first push to a new branch. The fallback to HEAD~1
@@ -17,8 +24,8 @@
 #     harness, not a production service, and carries no security gate.
 #
 # Secrets:
-#   secrets: inherit forwards GITHUB_TOKEN and any repo secrets (incl.
-#   GIT_TOKEN, consumed by reusable-gitops.yaml) to the called workers.
+#   secrets: inherit forwards GITHUB_TOKEN to the build worker for GHCR push.
+#   GIT_TOKEN is no longer needed here; the CD repo is not touched.
 #
 # Permissions (top level = ceiling for every reusable workflow this calls):
 #   A called reusable workflow can only request permissions at or below what
@@ -26,12 +33,6 @@
 #   packages: write (GHCR push) and security-events: write (Trivy SARIF), so
 #   both must be granted at this level or the run fails at startup. See the
 #   runbook, Phase 7 Bug 3 for the startup failure this caused.
-#
-# Short SHA note:
-#   short_sha is computed once in detect-changes (bash substring ${GITHUB_SHA:0:7})
-#   and surfaced as a job output. gitops-update consumes it as
-#   needs.detect-changes.outputs.short_sha so the CD repo image.env stays
-#   consistent with the :sha-<7char> tag pushed to GHCR by reusable-build.yaml.
 # =============================================================================
 
 name: DevSecOps CI - Microservices
@@ -73,8 +74,6 @@ jobs:
   # Emit a JSON array of service directory names whose source changed in this
   # push. Downstream matrix reads this array; an empty array short circuits
   # the build via the has_changes flag.
-  # Also emits short_sha (first 7 chars of github.sha) for use by gitops-update.
-  # GHA expressions do not support string slicing, so bash substring is used.
   # ============================================================================
   detect-changes:
     name: Detect Changed Services
@@ -82,7 +81,6 @@ jobs:
     outputs:
       services: ${{ steps.changed.outputs.services }}
       has_changes: ${{ steps.changed.outputs.has_changes }}
-      short_sha: ${{ steps.changed.outputs.short_sha }}
 
     steps:
       - name: Checkout - full history required for git diff range
@@ -115,14 +113,13 @@ jobs:
             echo "has_changes=true" >> "$GITHUB_OUTPUT"
           fi
 
-          # Emit short SHA (7 chars). GHA expressions do not support [0:7]
-          # slicing, so bash substring is used here and surfaced as an output.
-          echo "short_sha=${GITHUB_SHA:0:7}" >> "$GITHUB_OUTPUT"
-
   # ============================================================================
   # JOB 2: build-and-push
   # Fan out one parallel job per changed service via the matrix strategy.
   # Each job calls the reusable build worker which owns build, scan, and push.
+  #
+  # After images land in GHCR, ArgoCD Image Updater detects the new digests
+  # and updates the running deployments. No CD repo write needed from CI.
   # ============================================================================
   build-and-push:
     name: Build · Scan · Push - ${{ matrix.service }}
@@ -134,9 +131,6 @@ jobs:
       matrix:
         service: ${{ fromJson(needs.detect-changes.outputs.services) }}
 
-    # Reusable workflows are called at job level, not step level.
-    # push_image is intentionally not passed here. reusable-build.yaml defaults
-    # it to true; Job 3's if: condition is what prevents CD writes on PRs.
     uses: ./.github/workflows/reusable-build.yaml
     with:
       service: ${{ matrix.service }}
@@ -144,31 +138,4 @@ jobs:
       # service uses src/<service>/ directly. Pass the context override so the
       # reusable worker does not need repo specific knowledge baked in.
       docker_context: ${{ matrix.service == 'cartservice' && 'src/cartservice/src' || format('src/{0}', matrix.service) }}
-    secrets: inherit   # forward GITHUB_TOKEN + any repo secrets to the worker
-
-  # ============================================================================
-  # JOB 3: gitops-update
-  # Runs once after ALL service builds succeed. Writes a single commit to the
-  # CD repo containing updated image tags for every changed service.
-  # Batching into one commit prevents ArgoCD from reconciling N times for an
-  # N service push: one sync wave, one rollout event.
-  # Skipped on pull_request; never mutate the CD repo on unmerged code.
-  #
-  # image_tag uses the short SHA (sha-<7char>) so image.env in the CD repo
-  # matches the :sha-<7char> tag pushed to GHCR by reusable-build.yaml.
-  # The full :sha-<40char> tag also exists in GHCR (IMAGE_REF) but the short
-  # form is what ArgoCD Image Updater tracks and what humans read in the CD log.
-  # ============================================================================
-  gitops-update:
-    name: GitOps - Update CD Manifest Tags
-    needs: [detect-changes, build-and-push]
-    if: |
-      needs.detect-changes.outputs.has_changes == 'true' &&
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
-      github.ref == 'refs/heads/main'
-
-    uses: ./.github/workflows/reusable-gitops.yaml
-    with:
-      services: ${{ needs.detect-changes.outputs.services }}
-      image_tag: sha-${{ needs.detect-changes.outputs.short_sha }}
-    secrets: inherit
+    secrets: inherit   # forward GITHUB_TOKEN to the worker for GHCR push

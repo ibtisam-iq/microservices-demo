@@ -1,0 +1,164 @@
+# =============================================================================
+# Helm Chart Release: Package, Push, and Update CD Repo
+# Repo:    github.com/ibtisam-iq/microservices-demo
+#
+# Trigger:
+#   Runs on push to main when any file under helm-chart/ changes.
+#   This includes Chart.yaml version bumps, template changes, and the
+#   upstream values.yaml. The chart is packaged from the upstream
+#   helm-chart/ directory as-is (no upstream files are modified) and
+#   pushed to oci://ghcr.io/ibtisam-iq as an OCI artifact.
+#
+# Scope:
+#   This workflow owns the Helm chart lifecycle:
+#     1. Lint and validate the chart
+#     2. Package and push to GHCR
+#     3. Update the chart version in kustomization.yaml in the CD repo
+#
+#   It does NOT handle image tags. ArgoCD Image Updater owns image tag
+#   resolution by watching GHCR for new digests. This workflow only
+#   ensures the CD repo references the correct chart version so ArgoCD
+#   pulls the right chart templates and configuration.
+#
+# Relationship to ci-trigger.yaml:
+#   ci-trigger.yaml handles container images (build, scan, push to GHCR).
+#   This workflow handles the Helm chart artifact and CD repo chart version.
+#   They trigger on different paths (src/** vs helm-chart/**) and run
+#   independently. If both change in the same push, both fire in parallel.
+#
+# CD repo update:
+#   After pushing the chart, this workflow clones the CD repo and updates
+#   the version field in systems/microservices-demo/kustomization.yaml.
+#   This is the sole trigger for ArgoCD to pull a new chart version.
+#   The same token security pattern from reusable-gitops.yaml is used:
+#   clone via public URL, set authenticated remote after clone, clear
+#   token after push.
+#
+# Authentication:
+#   GIT_TOKEN is a fine grained GitHub PAT with Contents: Read and Write
+#   on platform-engineering-systems only. Required for the CD repo push.
+#
+# Permissions:
+#   packages: write is required to push OCI artifacts to GHCR.
+#   contents: read for checkout.
+# =============================================================================
+
+name: Helm Chart Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "helm-chart/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+
+  chart-release:
+    name: Package, Push, and Update CD
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+
+      # ────────────────────────────────────────────────────────────────────────
+      # STAGE 1: Checkout and read chart metadata
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Read chart metadata
+        id: chart
+        run: |
+          CHART_NAME=$(grep '^name:' helm-chart/Chart.yaml | awk '{print $2}')
+          CHART_VERSION=$(grep '^version:' helm-chart/Chart.yaml | sed "s/version: *//; s/\"//g" | tr -d '[:space:]')
+          APP_VERSION=$(grep '^appVersion:' helm-chart/Chart.yaml | sed "s/appVersion: *//; s/\"//g" | tr -d '[:space:]')
+          echo "name=${CHART_NAME}" >> "$GITHUB_OUTPUT"
+          echo "version=${CHART_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "app_version=${APP_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Chart: ${CHART_NAME} v${CHART_VERSION} (appVersion: ${APP_VERSION})"
+
+      # ────────────────────────────────────────────────────────────────────────
+      # STAGE 2: Lint, package, and push chart to GHCR
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Helm lint
+        run: helm lint helm-chart/
+
+      - name: Helm package
+        run: |
+          helm package helm-chart/
+          ls -la ${{ steps.chart.outputs.name }}-${{ steps.chart.outputs.version }}.tgz
+
+      - name: Login to GHCR (Helm)
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io \
+            --username ${{ github.actor }} \
+            --password-stdin
+
+      - name: Push chart to GHCR
+        run: |
+          helm push \
+            ${{ steps.chart.outputs.name }}-${{ steps.chart.outputs.version }}.tgz \
+            oci://ghcr.io/${{ github.repository_owner }}
+
+      - name: Verify push
+        run: |
+          echo "Chart pushed to: oci://ghcr.io/${{ github.repository_owner }}/${{ steps.chart.outputs.name }}:${{ steps.chart.outputs.version }}"
+          helm show chart oci://ghcr.io/${{ github.repository_owner }}/${{ steps.chart.outputs.name }} \
+            --version ${{ steps.chart.outputs.version }}
+
+      # ────────────────────────────────────────────────────────────────────────
+      # STAGE 3: Update chart version in CD repo
+      # Clone the CD repo, update the version field in kustomization.yaml,
+      # commit, and push. This is the trigger for ArgoCD to pull the new
+      # chart version. sed targets the 4-space-indented "version:" line
+      # under helmCharts[0] in the Kustomization structure.
+      #
+      # Token security: clone via public URL, set authenticated remote
+      # after clone, clear token after push.
+      # ────────────────────────────────────────────────────────────────────────
+      - name: Clone CD repo
+        run: |
+          git clone https://github.com/ibtisam-iq/platform-engineering-systems.git cd-repo
+
+      - name: Configure git identity and authenticated remote
+        env:
+          GIT_TOKEN: ${{ secrets.GIT_TOKEN }}
+        run: |
+          cd cd-repo
+          git config --local user.email "github-actions@ibtisam-iq.com"
+          git config --local user.name  "GitHub Actions CI"
+          git remote set-url origin https://x-access-token:${GIT_TOKEN}@github.com/ibtisam-iq/platform-engineering-systems.git
+
+      - name: Update chart version in kustomization.yaml
+        run: |
+          cd cd-repo
+          KUSTOMIZATION="systems/microservices-demo/kustomization.yaml"
+          echo "Updating chart version to ${{ steps.chart.outputs.version }} in ${KUSTOMIZATION}"
+          sed -i "s/^    version: .*/    version: ${{ steps.chart.outputs.version }}/" "${KUSTOMIZATION}"
+          git add "${KUSTOMIZATION}"
+
+      - name: Commit and push - skip if version unchanged
+        run: |
+          cd cd-repo
+          if git diff --cached --quiet; then
+            echo "Nothing to commit. Chart version already up to date."
+          else
+            git commit -m "ci: update microservices-demo chart to ${{ steps.chart.outputs.version }} [skip ci]"
+            git push origin HEAD
+            echo "CD repo updated. ArgoCD will sync the new chart version."
+          fi
+
+      - name: Clear token from remote URL
+        if: always()
+        run: |
+          cd cd-repo 2>/dev/null || exit 0
+          git remote set-url origin https://github.com/ibtisam-iq/platform-engineering-systems.git
+
+      - name: Cleanup - remove cloned CD repo
+        if: always()
+        run: rm -rf cd-repo
