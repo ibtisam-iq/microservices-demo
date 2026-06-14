@@ -1,0 +1,17 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - extra-manifests/httproute.yaml
+  - extra-manifests/app-target-grp-config.yaml
+
+helmCharts:
+  - name: helm-chart
+    releaseName: boutique-app
+    namespace: boutique-app
+    valuesInline:
+      images:
+        repository: ghcr.io/ibtisam-iq/microservices-demo
+        tag: latest
+      loadGenerator:
+        create: false
