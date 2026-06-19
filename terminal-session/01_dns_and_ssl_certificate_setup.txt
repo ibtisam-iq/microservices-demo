@@ -1,0 +1,260 @@
+# Phase 1: DNS Hosted Zone and SSL Certificate Setup (ACM)
+# - Created Route 53 Hosted Zone for the domain
+# - Requested ACM (AWS Certificate Manager) certificate for the domain
+# - Certificate will be used for HTTPS/TLS on the Gateway API later
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                  Welcome to SilverStack Dev Machine!  🛠                     │
+├─────────────────────────────────────────────────────────────────────────────┤
+│  A fully provisioned DevOps workstation - no setup required.                │
+│  All tools, runtimes, and shell shortcuts are pre-installed and ready.      │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+  Pre-installed tools:
+
+  RUNTIMES        java 21   python3    node LTS    npm    maven
+  CONTAINERS      docker    docker-compose    buildx    skopeo    dive    hadolint
+  KUBERNETES      kubectl   helm    kustomize    k9s    kubectx    kubens    stern    eksctl
+  INFRA & CI/CD   terraform aws cli v2  ansible  ansible-lint  pre-commit  yamllint  gh
+                  act  helmfile  skaffold
+  SECURITY        trivy     gitleaks    cosign    syft
+  DATA & SEARCH   jq        yq          fzf       rg
+  NETWORKING      nmap      openssl     ssh       socat        cloudflared
+  DB CLIENTS      mysql     psql        sqlite3   redis-cli    mongosh
+
+  Pre-defined shortcuts:
+
+  kubectl    →  k  kgp  kgs  kgn  kgd  kaf  kdf  kdp  kns  kctx  klog  kexec
+  docker     →  d  dps  dpsa  di  dex  dlog  dprune  dc  dcup  dcdown  dclogs
+  terraform  →  tf  tfi  tfp  tfa  tfd  tfv  tff
+  git        →  g  gs  ga  gc  gp  gl  gco  gb  gd
+  general    →  ll  la  ..  ...  ports  myip  paths
+
+  Tab completion enabled: kubectl (k)  docker (d)
+
+  Run 'alias' to see the full list.
+
+  Full setup docs and source references:
+  https://runbook.ibtisam-iq.com/containers/iximiuz/rootfs/setup-dev-machine-rootfs-image
+
+
+ibtisam@dev-machine:~ $ aws configure
+
+Tip: You can deliver temporary credentials to the AWS CLI using your AWS Console session by running the command 'aws login'.
+
+AWS Access Key ID [None]: <REDACTED>
+AWS Secret Access Key [None]: <REDACTED>
+Default region name [None]: us-east-1
+Default output format [None]: json
+
+ibtisam@dev-machine:~ $ # Set domain
+DOMAIN="ibtisam.qzz.io"
+
+# Create the public hosted zone
+aws route53 create-hosted-zone \
+  --name "$DOMAIN" \
+  --caller-reference "$(date +%s)" \
+  --hosted-zone-config Comment="Public hosted zone for ${DOMAIN}",PrivateZone=false
+
+# Capture the hosted zone ID
+HOSTED_ZONE_ID=$(aws route53 list-hosted-zones \
+  --query "HostedZones[?Name=='${DOMAIN}.'].Id" \
+  --output text | cut -d'/' -f3)
+
+echo "Hosted Zone ID: $HOSTED_ZONE_ID"
+
+# Retrieve the four AWS nameservers to add at the registrar
+aws route53 get-hosted-zone \
+  --id "$HOSTED_ZONE_ID" \
+  --query "DelegationSet.NameServers" \
+  --output table
+{
+    "Location": "https://route53.amazonaws.com/2013-04-01/hostedzone/Z0210061LY7BBUGRLOK6",
+    "HostedZone": {
+        "Id": "/hostedzone/Z0210061LY7BBUGRLOK6",
+        "Name": "ibtisam.qzz.io.",
+        "CallerReference": "1781792273",
+        "Config": {
+            "Comment": "Public hosted zone for ibtisam.qzz.io",
+            "PrivateZone": false
+        },
+        "ResourceRecordSetCount": 2
+    },
+    "ChangeInfo": {
+        "Id": "/change/C053055013JWIDEDTI1SJ",
+        "Status": "PENDING",
+        "SubmittedAt": "2026-06-18T14:17:54.588000+00:00"
+    },
+    "DelegationSet": {
+        "NameServers": [
+            "ns-566.awsdns-06.net",
+            "ns-331.awsdns-41.com",
+            "ns-1701.awsdns-20.co.uk",
+            "ns-1359.awsdns-41.org"
+        ]
+    }
+}
+Hosted Zone ID: Z0210061LY7BBUGRLOK6
+-----------------------------
+|       GetHostedZone       |
++---------------------------+
+|  ns-566.awsdns-06.net     |
+|  ns-331.awsdns-41.com     |
+|  ns-1701.awsdns-20.co.uk  |
+|  ns-1359.awsdns-41.org    |
++---------------------------+
+
+ibtisam@dev-machine:~ $ # Check propagation via Google's public resolver (fastest indicator)
+dig NS "$DOMAIN" @8.8.8.8 +short
+
+# Check via local resolver (may still show old NS during propagation window)
+dig NS "$DOMAIN" +short
+
+# Confirm Route 53 is serving NS and SOA records
+aws route53 list-resource-record-sets \
+  --hosted-zone-id "$HOSTED_ZONE_ID" \
+  --output table
+ns-566.awsdns-06.net.
+ns-1701.awsdns-20.co.uk.
+ns-331.awsdns-41.com.
+ns-1359.awsdns-41.org.
+ns-1359.awsdns-41.org.
+ns-1701.awsdns-20.co.uk.
+ns-331.awsdns-41.com.
+ns-566.awsdns-06.net.
+--------------------------------------------------------------------------------------
+|                               ListResourceRecordSets                               |
++------------------------------------------------------------------------------------+
+||                                ResourceRecordSets                                ||
+|+-----------------------------------------+----------------------+-----------------+|
+||                  Name                   |         TTL          |      Type       ||
+|+-----------------------------------------+----------------------+-----------------+|
+||  ibtisam.qzz.io.                        |  172800              |  NS             ||
+|+-----------------------------------------+----------------------+-----------------+|
+|||                                 ResourceRecords                                |||
+||+--------------------------------------------------------------------------------+||
+|||                                      Value                                     |||
+||+--------------------------------------------------------------------------------+||
+|||  ns-566.awsdns-06.net.                                                         |||
+|||  ns-331.awsdns-41.com.                                                         |||
+|||  ns-1701.awsdns-20.co.uk.                                                      |||
+|||  ns-1359.awsdns-41.org.                                                        |||
+||+--------------------------------------------------------------------------------+||
+||                                ResourceRecordSets                                ||
+|+---------------------------------------------+----------------+-------------------+|
+||                    Name                     |      TTL       |       Type        ||
+|+---------------------------------------------+----------------+-------------------+|
+||  ibtisam.qzz.io.                            |  900           |  SOA              ||
+|+---------------------------------------------+----------------+-------------------+|
+|||                                 ResourceRecords                                |||
+||+--------------------------------------------------------------------------------+||
+|||                                      Value                                     |||
+||+--------------------------------------------------------------------------------+||
+|||  ns-566.awsdns-06.net. awsdns-hostmaster.amazon.com. 1 7200 900 1209600 86400  |||
+||+--------------------------------------------------------------------------------+||
+
+
+-------------------------------------------------------------------------------------------------------------------------
+
+
+ibtisam@dev-machine:~ $ # Set variables
+DOMAIN="ibtisam.qzz.io"
+REGION="us-east-1"
+
+# Request the certificate
+CERT_ARN=$(aws acm request-certificate \
+  --domain-name "$DOMAIN" \
+  --subject-alternative-names "*.${DOMAIN}" \
+  --validation-method DNS \
+  --region "$REGION" \
+  --query "CertificateArn" \
+  --output text)
+
+echo "Certificate ARN: $CERT_ARN"
+
+# Retrieve the validation CNAME name and value (ACM returns both with a trailing dot)
+sleep 10
+
+CNAME_NAME=$(aws acm describe-certificate \
+  --certificate-arn "$CERT_ARN" \
+  --region "$REGION" \
+  --query "Certificate.DomainValidationOptions[0].ResourceRecord.Name" \
+  --output text)
+
+CNAME_VALUE=$(aws acm describe-certificate \
+  --certificate-arn "$CERT_ARN" \
+  --region "$REGION" \
+  --query "Certificate.DomainValidationOptions[0].ResourceRecord.Value" \
+  --output text)
+
+echo "CNAME Name:  $CNAME_NAME"
+echo "CNAME Value: $CNAME_VALUE"
+Certificate ARN: arn:aws:acm:us-east-1:767397778924:certificate/47da9369-a997-4197-9f4b-60b426a112a3
+CNAME Name:  _c96eef23fc6ea7957416df89e42d7ea4.ibtisam.qzz.io.
+CNAME Value: _b846232323d5800d6c186c23ed3fb1b3.jkddzztszm.acm-validations.aws.
+
+ibtisam@dev-machine:~ $ # Capture hosted zone ID (Route 53 only)
+HOSTED_ZONE_ID=$(aws route53 list-hosted-zones \
+  --query "HostedZones[?Name=='${DOMAIN}.'].Id" \
+  --output text | cut -d'/' -f3)
+
+# Inject the validation CNAME into Route 53 (trailing dot in $CNAME_NAME is fine)
+cat > /tmp/acm-validation.json <<EOF
+{
+  "Changes": [
+    {
+      "Action": "UPSERT",
+      "ResourceRecordSet": {
+        "Name": "${CNAME_NAME}",
+        "Type": "CNAME",
+        "TTL": 300,
+        "ResourceRecords": [ { "Value": "${CNAME_VALUE}" } ]
+      }
+    }
+  ]
+}
+EOF
+
+aws route53 change-resource-record-sets \
+  --hosted-zone-id "$HOSTED_ZONE_ID" \
+  --change-batch file:///tmp/acm-validation.json
+{
+    "ChangeInfo": {
+        "Id": "/change/C02806782144JIBBXJY7B",
+        "Status": "PENDING",
+        "SubmittedAt": "2026-06-18T14:20:40.178000+00:00"
+    }
+}
+
+ibtisam@dev-machine:~ $ # Wait for ACM to detect the CNAME and issue the certificate
+aws acm wait certificate-validated \
+  --certificate-arn "$CERT_ARN" \
+  --region "$REGION"
+
+echo "Certificate issued."
+
+# Confirm issued status
+aws acm describe-certificate \
+  --certificate-arn "$CERT_ARN" \
+  --region "$REGION" \
+  --query "Certificate.{Status:Status,NotAfter:NotAfter,DomainName:DomainName}" \
+  --output table
+Certificate issued.
+------------------------------------------------------
+|                 DescribeCertificate                |
++-----------------+-----------+----------------------+
+|   DomainName    | NotAfter  |       Status         |
++-----------------+-----------+----------------------+
+|  ibtisam.qzz.io |  None     |  PENDING_VALIDATION  |
++-----------------+-----------+----------------------+
+
+ibtisam@dev-machine:~ $ aws acm describe-certificate   --certificate-arn "$CERT_ARN"   --region "$REGION"   --query "Certificate.{Status:Status,NotAfter:NotAfter,DomainName:DomainName}"   --output table
+-----------------------------------------------------------
+|                   DescribeCertificate                   |
++-----------------+-----------------------------+---------+
+|   DomainName    |          NotAfter           | Status  |
++-----------------+-----------------------------+---------+
+|  ibtisam.qzz.io |  2027-01-01T23:59:59+00:00  |  ISSUED |
++-----------------+-----------------------------+---------+
+
+ibtisam@dev-machine:~ $ 

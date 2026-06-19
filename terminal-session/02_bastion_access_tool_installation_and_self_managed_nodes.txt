@@ -1,0 +1,359 @@
+# Phase 2: Bastion Access, Tool Installation, and Self-Managed Nodes
+# - SSH to bastion host
+# - Install required tools on bastion
+# - Add self-managed node group (3 worker nodes)
+# - Add OIDC provider to Identity Federation for IAM Roles for Service Accounts
+
+
+ibtisam@dev-machine:~ $ cd silver-stack/terraform/aws/eks-kodekloud/
+
+ibtisam@dev-machine:~/silver-stack/terraform/aws/eks-kodekloud $ ls silver-stack-eks-bastion-key.pem 
+silver-stack-eks-bastion-key.pem
+
+ibtisam@dev-machine:~/silver-stack/terraform/aws/eks-kodekloud $ ssh -i "silver-stack-eks-bastion-key.pem" ubuntu@ec2-3-88-19-104.compute-1.amazonaws.com
+The authenticity of host 'ec2-3-88-19-104.compute-1.amazonaws.com (3.88.19.104)' can't be established.
+ED25519 key fingerprint is SHA256:Pm95TErR/alHhkButn8pH+Ok1YSJlliZErcDwSejX7M.
+This key is not known by any other names.
+Are you sure you want to continue connecting (yes/no/[fingerprint])? yes
+Warning: Permanently added 'ec2-3-88-19-104.compute-1.amazonaws.com' (ED25519) to the list of known hosts.
+Welcome to Ubuntu 26.04 LTS (GNU/Linux 7.0.0-1006-aws x86_64)
+
+<REDACTED_FOR_BREVITY>
+
+ubuntu@ip-10-0-101-70:~$ sudo apt update && sudo apt install tree -y
+<REDACTED_FOR_BREVITY>
+Installing:                     
+  tree
+<REDACTED_FOR_BREVITY>
+
+ubuntu@ip-10-0-101-70:~$ # Fetch the latest stable version string
+KUBECTL_VERSION=$(curl -sSL https://dl.k8s.io/release/stable.txt)
+
+# Detect architecture
+ARCH=$(uname -m)
+[ "$ARCH" = "x86_64" ] && ARCH="amd64"
+[ "$ARCH" = "aarch64" ] && ARCH="arm64"
+
+# Download the binary
+curl -sSLO "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${ARCH}/kubectl"
+
+# Make it executable and move to PATH
+chmod +x kubectl
+sudo mv kubectl /usr/local/bin/kubectl
+
+# Verify
+kubectl version --client
+Client Version: v1.36.2
+Kustomize Version: v5.8.1
+ubuntu@ip-10-0-101-70:~$ # Enable kubectl autocompletion in the current bash session
+source <(kubectl completion bash)
+
+# Persist autocompletion across all future bash sessions
+echo "source <(kubectl completion bash)" >> ~/.bashrc
+
+# Create a short alias and wire autocompletion to it
+alias k=kubectl
+complete -o default -F __start_kubectl k
+ubuntu@ip-10-0-101-70:~$ # Download and run the official Helm install script
+curl -sSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-4 | bash
+
+# Verify
+helm version --short
+Downloading https://get.helm.sh/helm-v4.2.2-linux-amd64.tar.gz
+Verifying checksum... Done.
+Preparing to install helm into /usr/local/bin
+helm installed into /usr/local/bin/helm
+v4.2.2+gb05881c
+ubuntu@ip-10-0-101-70:~$ # Detect architecture
+ARCH=$(uname -m)
+[ "$ARCH" = "x86_64" ]  && AWS_ARCH="x86_64"
+[ "$ARCH" = "aarch64" ] && AWS_ARCH="aarch64"
+
+# Install unzip if not already present
+sudo apt-get install -y unzip
+
+# Download the architecture-specific installer
+curl -sSL "https://awscli.amazonaws.com/awscli-exe-linux-${AWS_ARCH}.zip" -o "awscliv2.zip"
+
+# Unzip and run the installer
+unzip -q awscliv2.zip
+sudo ./aws/install
+
+# Clean up
+rm -rf awscliv2.zip aws/
+
+# Verify
+aws --version
+Reading package lists... Done
+Building dependency tree... Done
+Reading state information... Done
+Solving dependencies... Done
+Suggested packages:
+  zip
+The following NEW packages will be installed:
+  unzip
+0 upgraded, 1 newly installed, 0 to remove and 17 not upgraded.
+Need to get 181 kB of archives.
+After this operation, 430 kB of additional disk space will be used.
+Get:1 http://us-east-1.ec2.archive.ubuntu.com/ubuntu resolute/main amd64v3 unzip amd64 6.0-29ubuntu1 [181 kB]
+Fetched 181 kB in 0s (8152 kB/s)
+Selecting previously unselected package unzip.
+(Reading database ... 85310 files and directories currently installed.)
+Preparing to unpack .../unzip_6.0-29ubuntu1_amd64v3.deb ...
+Unpacking unzip (6.0-29ubuntu1) ...
+Setting up unzip (6.0-29ubuntu1) ...
+Processing triggers for man-db (2.13.1-1build1) ...
+Scanning processes...                                                                                                                                    
+Scanning linux images...                                                                                                                                 
+
+Running kernel seems to be up-to-date.
+
+No services need to be restarted.
+
+No containers need to be restarted.
+
+No user sessions are running outdated binaries.
+
+No VM guests are running outdated hypervisor (qemu) binaries on this host.
+You can now run: /usr/local/bin/aws --version
+aws-cli/2.35.7 Python/3.14.5 Linux/7.0.0-1006-aws exe/x86_64.ubuntu.26
+ubuntu@ip-10-0-101-70:~$ # Detect architecture
+ARCH=$(uname -m)
+[ "$ARCH" = "x86_64" ] && ARCH="amd64"
+[ "$ARCH" = "aarch64" ] && ARCH="arm64"
+
+# Fetch the latest release tag
+EKSCTL_VERSION=$(curl -sSL https://api.github.com/repos/eksctl-io/eksctl/releases/latest | grep '"tag_name"' | cut -d'"' -f4)
+
+# Download the tarball
+curl -sSLO "https://github.com/eksctl-io/eksctl/releases/download/${EKSCTL_VERSION}/eksctl_Linux_${ARCH}.tar.gz"
+
+# Extract and install
+tar -xzf "eksctl_Linux_${ARCH}.tar.gz" eksctl
+sudo mv eksctl /usr/local/bin/eksctl
+sudo chmod +x /usr/local/bin/eksctl
+
+# Clean up
+rm -f "eksctl_Linux_${ARCH}.tar.gz"
+
+# Verify
+eksctl version
+0.227.0
+
+
+-----------------------------------------------------------------------------------------------------------
+
+
+ubuntu@ip-10-0-101-70:~$ aws configure
+
+Tip: You can deliver temporary credentials to the AWS CLI using your AWS Console session by running the command 'aws login'.
+
+AWS Access Key ID [None]: <REDACTED>
+AWS Secret Access Key [None]: <REDACTED>
+Default region name [None]: us-east-1
+Default output format [None]: json
+ubuntu@ip-10-0-101-70:~$ aws sts get-caller-identity
+{
+    "UserId": "AIDA3FLDY2XWKPRVF5UWS",
+    "Account": "767397778924",
+    "Arn": "arn:aws:iam::767397778924:user/kk_labs_user_761749"
+}
+ubuntu@ip-10-0-101-70:~$ CLUSTER_NAME=silver-stack-eks
+ubuntu@ip-10-0-101-70:~$ REGION=us-east-1
+ubuntu@ip-10-0-101-70:~$ eksctl utils associate-iam-oidc-provider \
+  --cluster $CLUSTER_NAME \
+  --region $REGION \
+  --approve
+2026-06-18 14:30:15 [ℹ]  IAM Open ID Connect provider is already associated with cluster "silver-stack-eks" in "us-east-1"
+ubuntu@ip-10-0-101-70:~$ aws eks update-kubeconfig --region us-east-1 --name silver-stack-eks
+Added new context arn:aws:eks:us-east-1:767397778924:cluster/silver-stack-eks to /home/ubuntu/.kube/config
+ubuntu@ip-10-0-101-70:~$ k get no
+No resources found
+ubuntu@ip-10-0-101-70:~$ 
+
+
+-----------------------------------------------------------------------------------------------------------
+
+
+ubuntu@ip-10-0-101-70:~$ CLUSTER_NAME=silver-stack-eks
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+REGION=us-east-1
+BASTION_KEY="${CLUSTER_NAME}-bastion-key"
+
+VPC_ID=$(aws eks describe-cluster \
+  --name "$CLUSTER_NAME" \
+  --query "cluster.resourcesVpcConfig.vpcId" \
+  --output text)
+
+CLUSTER_SG=$(aws eks describe-cluster \
+  --name "$CLUSTER_NAME" \
+  --query "cluster.resourcesVpcConfig.clusterSecurityGroupId" \
+  --output text)
+
+# Private subnets for nodes — they are already tagged by vpc.tf
+SUBNET_IDS=$(aws ec2 describe-subnets \
+  --filters "Name=vpc-id,Values=$VPC_ID" \
+            "Name=tag:kubernetes.io/role/internal-elb,Values=1" \
+  --query "Subnets[*].SubnetId" \
+  --output text | tr '\t' ',')
+
+API_SERVER=$(aws eks describe-cluster --name "$CLUSTER_NAME" \
+  --query "cluster.endpoint" --output text)
+
+CA_DATA=$(aws eks describe-cluster --name "$CLUSTER_NAME" \
+  --query "cluster.certificateAuthority.data" --output text)
+
+SERVICE_CIDR=$(aws eks describe-cluster --name "$CLUSTER_NAME" \
+  --query "cluster.kubernetesNetworkConfig.serviceIpv4Cidr" --output text)
+
+K8S_VERSION=$(aws eks describe-cluster --name "$CLUSTER_NAME" \
+  --query "cluster.version" --output text)
+
+AUTH_MODE=$(aws eks describe-cluster --name "$CLUSTER_NAME" \
+  --query "cluster.accessConfig.authenticationMode" --output text)
+
+case "$AUTH_MODE" in
+  API)                AUTH_MODE_PARAM="EKS API" ;;
+  API_AND_CONFIG_MAP) AUTH_MODE_PARAM="EKS API and ConfigMap" ;;
+  CONFIG_MAP)         AUTH_MODE_PARAM="ConfigMap" ;;
+esac
+
+echo "VPC: $VPC_ID | SG: $CLUSTER_SG | Subnets: $SUBNET_IDS"
+echo "API: $API_SERVER | CIDR: $SERVICE_CIDR | K8s: $K8S_VERSION"
+echo "Auth: $AUTH_MODE -> $AUTH_MODE_PARAM"
+VPC: vpc-0d9ea9360da788c1a | SG: sg-0cff1aaea784148bc | Subnets: subnet-01fecb4141cb9d358,subnet-041714e812d912590,subnet-0adf734bbf846258b
+API: https://677F72CBA6954E8E7101D1561406C8D1.gr7.us-east-1.eks.amazonaws.com | CIDR: 172.20.0.0/16 | K8s: 1.36
+Auth: API_AND_CONFIG_MAP -> EKS API and ConfigMap
+ubuntu@ip-10-0-101-70:~$ aws cloudformation get-template-summary \
+  --template-url https://s3.us-west-2.amazonaws.com/amazon-eks/cloudformation/2025-11-26/amazon-eks-nodegroup.yaml \
+  --query "Parameters[].ParameterKey" \
+  --output text | tr '\t' '\n' | sort
+ApiServerEndpoint
+AuthenticationMode
+CertificateAuthorityData
+ClusterControlPlaneSecurityGroup
+ClusterName
+KeyName
+NodeAutoScalingGroupDesiredCapacity
+NodeAutoScalingGroupMaxSize
+NodeAutoScalingGroupMinSize
+NodeGroupName
+NodeImageId
+NodeImageIdSSMParam
+NodeInstanceType
+NodeVolumeSize
+ServiceCidr
+Subnets
+VpcId
+ubuntu@ip-10-0-101-70:~$ cat > /tmp/cf-params.json << EOF
+[
+  {"ParameterKey": "ClusterName",                         "ParameterValue": "$CLUSTER_NAME"},
+  {"ParameterKey": "ClusterControlPlaneSecurityGroup",    "ParameterValue": "$CLUSTER_SG"},
+  {"ParameterKey": "ApiServerEndpoint",                   "ParameterValue": "$API_SERVER"},
+  {"ParameterKey": "CertificateAuthorityData",            "ParameterValue": "$CA_DATA"},
+  {"ParameterKey": "ServiceCidr",                         "ParameterValue": "$SERVICE_CIDR"},
+  {"ParameterKey": "AuthenticationMode",                  "ParameterValue": "$AUTH_MODE_PARAM"},
+  {"ParameterKey": "NodeGroupName",                       "ParameterValue": "${CLUSTER_NAME}-nodes"},
+  {"ParameterKey": "NodeInstanceType",                    "ParameterValue": "t3.medium"},
+  {"ParameterKey": "NodeImageIdSSMParam",                 "ParameterValue": "/aws/service/eks/optimized-ami/$K8S_VERSION/amazon-linux-2023/x86_64/standard/recommended/image_id"},
+  {"ParameterKey": "NodeVolumeSize",                      "ParameterValue": "20"},
+  {"ParameterKey": "VpcId",                               "ParameterValue": "$VPC_ID"},
+  {"ParameterKey": "Subnets",                             "ParameterValue": "$SUBNET_IDS"},
+  {"ParameterKey": "KeyName",                             "ParameterValue": "$BASTION_KEY"},
+  {"ParameterKey": "NodeAutoScalingGroupMinSize",         "ParameterValue": "1"},
+  {"ParameterKey": "NodeAutoScalingGroupMaxSize",         "ParameterValue": "4"},
+  {"ParameterKey": "NodeAutoScalingGroupDesiredCapacity", "ParameterValue": "3"}
+]
+EOF
+
+cat /tmp/cf-params.json  # verify no blank values
+[
+  {"ParameterKey": "ClusterName",                         "ParameterValue": "silver-stack-eks"},
+  {"ParameterKey": "ClusterControlPlaneSecurityGroup",    "ParameterValue": "sg-0cff1aaea784148bc"},
+  {"ParameterKey": "ApiServerEndpoint",                   "ParameterValue": "https://677F72CBA6954E8E7101D1561406C8D1.gr7.us-east-1.eks.amazonaws.com"},
+  {"ParameterKey": "CertificateAuthorityData",            "ParameterValue": "<REDACTED>"},
+  {"ParameterKey": "ServiceCidr",                         "ParameterValue": "172.20.0.0/16"},
+  {"ParameterKey": "AuthenticationMode",                  "ParameterValue": "EKS API and ConfigMap"},
+  {"ParameterKey": "NodeGroupName",                       "ParameterValue": "silver-stack-eks-nodes"},
+  {"ParameterKey": "NodeInstanceType",                    "ParameterValue": "t3.medium"},
+  {"ParameterKey": "NodeImageIdSSMParam",                 "ParameterValue": "/aws/service/eks/optimized-ami/1.36/amazon-linux-2023/x86_64/standard/recommended/image_id"},
+  {"ParameterKey": "NodeVolumeSize",                      "ParameterValue": "20"},
+  {"ParameterKey": "VpcId",                               "ParameterValue": "vpc-0d9ea9360da788c1a"},
+  {"ParameterKey": "Subnets",                             "ParameterValue": "subnet-01fecb4141cb9d358,subnet-041714e812d912590,subnet-0adf734bbf846258b"},
+  {"ParameterKey": "KeyName",                             "ParameterValue": "silver-stack-eks-bastion-key"},
+  {"ParameterKey": "NodeAutoScalingGroupMinSize",         "ParameterValue": "1"},
+  {"ParameterKey": "NodeAutoScalingGroupMaxSize",         "ParameterValue": "4"},
+  {"ParameterKey": "NodeAutoScalingGroupDesiredCapacity", "ParameterValue": "3"}
+]
+ubuntu@ip-10-0-101-70:~$ aws cloudformation create-stack \
+  --stack-name eks-nodes-stack \
+  --template-url https://s3.us-west-2.amazonaws.com/amazon-eks/cloudformation/2025-11-26/amazon-eks-nodegroup.yaml \
+  --parameters file:///tmp/cf-params.json \
+  --capabilities CAPABILITY_IAM
+{
+    "StackId": "arn:aws:cloudformation:us-east-1:767397778924:stack/eks-nodes-stack/6a1ee3c0-6b24-11f1-adad-0affee62bce3",
+    "OperationId": "6a206a60-6b24-11f1-adad-0affee62bce3"
+}
+ubuntu@ip-10-0-101-70:~$ aws cloudformation describe-stacks \
+  --stack-name eks-nodes-stack \
+  --query 'Stacks[0].StackStatus' --output text
+CREATE_COMPLETE
+
+
+---------------------------------------------------------------------------------------------------------
+
+
+ubuntu@ip-10-0-101-70:~$ NODE_ROLE_ARN=$(aws cloudformation describe-stacks \
+  --stack-name eks-nodes-stack \
+  --query "Stacks[0].Outputs[?OutputKey=='NodeInstanceRole'].OutputValue" \
+  --output text)
+
+curl -O https://s3.us-west-2.amazonaws.com/amazon-eks/cloudformation/2020-10-29/aws-auth-cm.yaml
+sed -i "s|<ARN of instance role (not instance profile)>|$NODE_ROLE_ARN|g" aws-auth-cm.yaml
+aws eks update-kubeconfig --region $REGION --name $CLUSTER_NAME
+kubectl apply -f aws-auth-cm.yaml
+  % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
+                                 Dload  Upload  Total   Spent   Left   Speed
+100    282 100    282   0      0   1376      0                              0
+Updated context arn:aws:eks:us-east-1:767397778924:cluster/silver-stack-eks in /home/ubuntu/.kube/config
+configmap/aws-auth created
+ubuntu@ip-10-0-101-70:~$ k get no
+NAME                         STATUS     ROLES    AGE   VERSION
+ip-10-0-1-106.ec2.internal   NotReady   <none>   1s    v1.36.1-eks-0de9cde
+ip-10-0-2-91.ec2.internal    NotReady   <none>   2s    v1.36.1-eks-0de9cde
+ip-10-0-3-20.ec2.internal    NotReady   <none>   4s    v1.36.1-eks-0de9cde
+ubuntu@ip-10-0-101-70:~$ k get no -w
+NAME                         STATUS     ROLES    AGE   VERSION
+ip-10-0-1-106.ec2.internal   NotReady   <none>   8s    v1.36.1-eks-0de9cde
+ip-10-0-2-91.ec2.internal    NotReady   <none>   9s    v1.36.1-eks-0de9cde
+ip-10-0-3-20.ec2.internal    NotReady   <none>   11s   v1.36.1-eks-0de9cde
+ip-10-0-2-91.ec2.internal    NotReady   <none>   10s   v1.36.1-eks-0de9cde
+ip-10-0-3-20.ec2.internal    Ready      <none>   21s   v1.36.1-eks-0de9cde
+ip-10-0-3-20.ec2.internal    Ready      <none>   21s   v1.36.1-eks-0de9cde
+ip-10-0-2-91.ec2.internal    NotReady   <none>   20s   v1.36.1-eks-0de9cde
+ip-10-0-1-106.ec2.internal   NotReady   <none>   20s   v1.36.1-eks-0de9cde
+ip-10-0-2-91.ec2.internal    NotReady   <none>   30s   v1.36.1-eks-0de9cde
+ip-10-0-1-106.ec2.internal   NotReady   <none>   29s   v1.36.1-eks-0de9cde
+ip-10-0-2-91.ec2.internal    Ready      <none>   31s   v1.36.1-eks-0de9cde
+ip-10-0-2-91.ec2.internal    Ready      <none>   31s   v1.36.1-eks-0de9cde
+ip-10-0-1-106.ec2.internal   Ready      <none>   30s   v1.36.1-eks-0de9cde
+ip-10-0-1-106.ec2.internal   Ready      <none>   30s   v1.36.1-eks-0de9cde
+^Cubuntu@ip-10-0-101-70:~$ k get no
+NAME                         STATUS   ROLES    AGE   VERSION
+ip-10-0-1-106.ec2.internal   Ready    <none>   39s   v1.36.1-eks-0de9cde
+ip-10-0-2-91.ec2.internal    Ready    <none>   40s   v1.36.1-eks-0de9cde
+ip-10-0-3-20.ec2.internal    Ready    <none>   42s   v1.36.1-eks-0de9cde
+ubuntu@ip-10-0-101-70:~$ k get po -A
+NAMESPACE     NAME                           READY   STATUS    RESTARTS   AGE
+kube-system   aws-node-kgfdt                 2/2     Running   0          50s
+kube-system   aws-node-m9cnc                 2/2     Running   0          48s
+kube-system   aws-node-whcwz                 2/2     Running   0          47s
+kube-system   coredns-6978bdb969-nnzbr       1/1     Running   0          25m
+kube-system   coredns-6978bdb969-r9lct       1/1     Running   0          25m
+kube-system   eks-pod-identity-agent-6xfhq   1/1     Running   0          47s
+kube-system   eks-pod-identity-agent-jmghr   1/1     Running   0          48s
+kube-system   eks-pod-identity-agent-rzxzm   1/1     Running   0          50s
+kube-system   kube-proxy-96rs7               1/1     Running   0          47s
+kube-system   kube-proxy-gk8j4               1/1     Running   0          50s
+kube-system   kube-proxy-nccdm               1/1     Running   0          48s
+ubuntu@ip-10-0-101-70:~$

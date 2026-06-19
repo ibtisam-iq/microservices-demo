@@ -1,0 +1,298 @@
+# Phase 1a: Cluster Provisioning with Terraform
+# - Parallel work along with Phase 1
+# - AWS CLI configuration
+# - Clone infrastructure repository
+# - Terraform init, plan, apply
+# - EKS control plane created
+
+
+ibtisam@dev-machine:~ $ git clone https://github.com/ibtisam-iq/silver-stack.git
+Cloning into 'silver-stack'...
+remote: Enumerating objects: 1455, done.
+remote: Counting objects: 100% (76/76), done.
+remote: Compressing objects: 100% (49/49), done.
+remote: Total 1455 (delta 48), reused 23 (delta 19), pack-reused 1379 (from 2)
+Receiving objects: 100% (1455/1455), 869.47 KiB | 7.01 MiB/s, done.
+Resolving deltas: 100% (687/687), done.
+
+ibtisam@dev-machine:~ $ cd silver-stack/
+
+ibtisam@dev-machine:~/silver-stack $ cd terraform/aws/eks-kodekloud/
+
+ibtisam@dev-machine:~/silver-stack/terraform/aws/eks-kodekloud $ ls
+README.md  bastion.tf  data.tf  eks.tf  iam-eks.tf  outputs.tf  terraform.tf  variables.tf  vpc.tf
+
+ibtisam@dev-machine:~/silver-stack/terraform/aws/eks-kodekloud $ tfi
+Initializing modules...
+Downloading registry.terraform.io/terraform-aws-modules/vpc/aws 6.6.1 for vpc...
+- vpc in .terraform/modules/vpc
+Downloading registry.terraform.io/terraform-aws-modules/ec2-instance/aws 6.4.0 for bastion...
+- bastion in .terraform/modules/bastion
+Initializing provider plugins found in the configuration...
+- Finding hashicorp/tls versions matching "~> 4.0"...
+- Finding hashicorp/time versions matching "~> 0.9"...
+- Finding hashicorp/http versions matching "~> 3.0"...
+- Finding hashicorp/local versions matching "~> 2.0"...
+- Finding hashicorp/aws versions matching ">= 6.28.0, >= 6.37.0, ~> 6.42"...
+- Installing hashicorp/tls v4.3.0...
+- Installed hashicorp/tls v4.3.0 (signed by HashiCorp)
+- Installing hashicorp/time v0.14.0...
+- Installed hashicorp/time v0.14.0 (signed by HashiCorp)
+- Installing hashicorp/http v3.6.0...
+- Installed hashicorp/http v3.6.0 (signed by HashiCorp)
+- Installing hashicorp/local v2.9.0...
+- Installed hashicorp/local v2.9.0 (signed by HashiCorp)
+- Installing hashicorp/aws v6.51.0...
+- Installed hashicorp/aws v6.51.0 (signed by HashiCorp)
+
+Initializing the backend...
+
+
+Terraform has created a lock file .terraform.lock.hcl to record the provider
+selections it made above. Include this file in your version control repository
+so that Terraform can guarantee to make the same selections by default when
+you run "terraform init" in the future.
+
+Terraform has been successfully initialized!
+
+You may now begin working with Terraform. Try running "terraform plan" to see
+any changes that are required for your infrastructure. All Terraform commands
+should now work.
+
+If you ever set or change modules or backend configuration for Terraform,
+rerun this command to reinitialize your working directory. If you forget, other
+commands will detect it and remind you to do so if necessary.
+
+ibtisam@dev-machine:~/silver-stack/terraform/aws/eks-kodekloud $ tfa
+data.http.my_ip: Reading...
+data.http.my_ip: Read complete after 0s [id=https://checkip.amazonaws.com]
+module.bastion.data.aws_ssm_parameter.this: Reading...
+module.bastion.data.aws_partition.current: Reading...
+data.aws_caller_identity.current: Reading...
+data.aws_region.current: Reading...
+data.aws_ami.ubuntu_2604: Reading...
+module.bastion.data.aws_partition.current: Read complete after 0s [id=aws]
+data.aws_region.current: Read complete after 0s [id=us-east-1]
+data.aws_caller_identity.current: Read complete after 0s [id=767397778924]
+module.bastion.data.aws_ssm_parameter.this: Read complete after 1s [id=/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64]
+data.aws_ami.ubuntu_2604: Read complete after 1s [id=ami-0b6d9d3d33ba97d99]
+
+Terraform used the selected providers to generate the following execution plan. Resource actions are indicated with the following symbols:
+  + create
+ <= read (data resources)
+
+Terraform will perform the following actions:
+
+<REDACTED_FOR_BREVITY>
+
+Do you want to perform these actions?
+  Terraform will perform the actions described above.
+  Only 'yes' will be accepted to approve.
+
+  Enter a value: yes
+
+tls_private_key.bastion: Creating...
+tls_private_key.bastion: Creation complete after 1s [id=554e9cff234b23b3e64eb534066d15cc799b0055]
+local_file.bastion_private_key: Creating...
+local_file.bastion_private_key: Creation complete after 0s [id=48c67af2e614d7c7190236ba3c89ed255f161ebe]
+aws_key_pair.bastion: Creating...
+aws_iam_role.eks_cluster_role: Creating...
+aws_iam_role.eks_node_role: Creating...
+module.vpc.aws_vpc.this[0]: Creating...
+aws_key_pair.bastion: Creation complete after 0s [id=silver-stack-eks-bastion-key]
+aws_iam_role.eks_cluster_role: Creation complete after 1s [id=eksClusterRole]
+aws_iam_role_policy_attachment.eks_cluster_policy: Creating...
+aws_iam_role.eks_node_role: Creation complete after 1s [id=eksNodeRole]
+aws_iam_role_policy_attachment.node_worker_policy: Creating...
+aws_iam_role_policy_attachment.node_ecr_policy: Creating...
+aws_iam_role_policy_attachment.node_ssm_policy: Creating...
+aws_iam_role_policy_attachment.node_cni_policy: Creating...
+aws_iam_role_policy_attachment.eks_cluster_policy: Creation complete after 1s [id=eksClusterRole/arn:aws:iam::aws:policy/AmazonEKSClusterPolicy]
+aws_iam_role_policy_attachment.node_ssm_policy: Creation complete after 1s [id=eksNodeRole/arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore]
+aws_iam_role_policy_attachment.node_ecr_policy: Creation complete after 1s [id=eksNodeRole/arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly]
+aws_iam_role_policy_attachment.node_cni_policy: Creation complete after 1s [id=eksNodeRole/arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy]
+aws_iam_role_policy_attachment.node_worker_policy: Creation complete after 1s [id=eksNodeRole/arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy]
+module.vpc.aws_vpc.this[0]: Creation complete after 3s [id=vpc-0d9ea9360da788c1a]
+module.vpc.aws_default_route_table.default[0]: Creating...
+module.vpc.aws_internet_gateway.this[0]: Creating...
+module.vpc.aws_route_table.private[0]: Creating...
+module.vpc.aws_route_table.public[0]: Creating...
+module.vpc.aws_subnet.private[2]: Creating...
+module.vpc.aws_subnet.private[1]: Creating...
+module.vpc.aws_subnet.private[0]: Creating...
+aws_security_group.bastion_sg: Creating...
+module.vpc.aws_default_security_group.this[0]: Creating...
+module.vpc.aws_default_network_acl.this[0]: Creating...
+module.vpc.aws_default_route_table.default[0]: Creation complete after 1s [id=rtb-0f24431b408dbb585]
+module.vpc.aws_subnet.public[0]: Creating...
+module.vpc.aws_internet_gateway.this[0]: Creation complete after 1s [id=igw-026c279d0a5537fa3]
+module.vpc.aws_subnet.public[1]: Creating...
+module.vpc.aws_route_table.private[0]: Creation complete after 1s [id=rtb-0638a194ba268474d]
+module.vpc.aws_subnet.public[2]: Creating...
+module.vpc.aws_route_table.public[0]: Creation complete after 1s [id=rtb-002bba77ecf03b0a7]
+module.vpc.aws_eip.nat[0]: Creating...
+module.vpc.aws_subnet.private[1]: Creation complete after 1s [id=subnet-0adf734bbf846258b]
+module.vpc.aws_route.public_internet_gateway[0]: Creating...
+module.vpc.aws_subnet.private[0]: Creation complete after 2s [id=subnet-01fecb4141cb9d358]
+module.vpc.aws_default_network_acl.this[0]: Creation complete after 3s [id=acl-02e120d9a83ac311d]
+module.vpc.aws_route.public_internet_gateway[0]: Creation complete after 2s [id=r-rtb-002bba77ecf03b0a71080289494]
+module.vpc.aws_default_security_group.this[0]: Creation complete after 3s [id=sg-05faa0e9e9a0f014d]
+module.vpc.aws_eip.nat[0]: Creation complete after 3s [id=eipalloc-0628bae7bad7e87c0]
+module.vpc.aws_subnet.private[2]: Creation complete after 4s [id=subnet-041714e812d912590]
+module.vpc.aws_route_table_association.private[0]: Creating...
+module.vpc.aws_route_table_association.private[1]: Creating...
+module.vpc.aws_route_table_association.private[2]: Creating...
+aws_security_group.bastion_sg: Creation complete after 4s [id=sg-0b5076a53c7a4fe25]
+aws_security_group.eks_additional: Creating...
+module.vpc.aws_route_table_association.private[1]: Creation complete after 0s [id=rtbassoc-0eb5f675512897f24]
+module.vpc.aws_route_table_association.private[0]: Creation complete after 0s [id=rtbassoc-0cee3d42b86a7845a]
+module.vpc.aws_route_table_association.private[2]: Creation complete after 0s [id=rtbassoc-0a6e4b5412e588c15]
+aws_security_group.eks_additional: Creation complete after 4s [id=sg-046a1efc469c426c0]
+aws_eks_cluster.this: Creating...
+module.vpc.aws_subnet.public[0]: Still creating... [00m10s elapsed]
+module.vpc.aws_subnet.public[1]: Still creating... [00m10s elapsed]
+module.vpc.aws_subnet.public[2]: Still creating... [00m10s elapsed]
+module.vpc.aws_subnet.public[0]: Creation complete after 11s [id=subnet-01b060dbc0f4ff85f]
+module.vpc.aws_subnet.public[2]: Creation complete after 12s [id=subnet-0d52099749170ea2c]
+module.vpc.aws_subnet.public[1]: Creation complete after 12s [id=subnet-0a6bf168b421896a7]
+module.bastion.data.aws_subnet.this[0]: Reading...
+module.vpc.aws_nat_gateway.this[0]: Creating...
+module.vpc.aws_route_table_association.public[1]: Creating...
+module.vpc.aws_route_table_association.public[2]: Creating...
+module.vpc.aws_route_table_association.public[0]: Creating...
+module.bastion.data.aws_subnet.this[0]: Read complete after 0s [id=subnet-01b060dbc0f4ff85f]
+module.bastion.aws_security_group.this[0]: Creating...
+module.vpc.aws_route_table_association.public[0]: Creation complete after 0s [id=rtbassoc-03734cd395a08414e]
+module.vpc.aws_route_table_association.public[1]: Creation complete after 0s [id=rtbassoc-09c6541e9e9debdd2]
+module.vpc.aws_route_table_association.public[2]: Creation complete after 1s [id=rtbassoc-0aaf21926d2a6c1a7]
+module.bastion.aws_security_group.this[0]: Creation complete after 3s [id=sg-0d2fb3f68328ec173]
+module.bastion.aws_instance.this[0]: Creating...
+module.bastion.aws_vpc_security_group_egress_rule.this["ipv4_default"]: Creating...
+module.bastion.aws_vpc_security_group_egress_rule.this["ipv6_default"]: Creating...
+module.bastion.aws_vpc_security_group_egress_rule.this["ipv6_default"]: Creation complete after 0s [id=sgr-094784a3bbff6822c]
+module.bastion.aws_vpc_security_group_egress_rule.this["ipv4_default"]: Creation complete after 0s [id=sgr-0c7ff22a813497e73]
+aws_eks_cluster.this: Still creating... [00m10s elapsed]
+module.vpc.aws_nat_gateway.this[0]: Still creating... [00m10s elapsed]
+module.bastion.aws_instance.this[0]: Still creating... [00m10s elapsed]
+aws_eks_cluster.this: Still creating... [00m20s elapsed]
+module.bastion.aws_instance.this[0]: Creation complete after 15s [id=i-083f08cbb0c9b4ffc]
+module.vpc.aws_nat_gateway.this[0]: Still creating... [00m20s elapsed]
+aws_eks_cluster.this: Still creating... [00m30s elapsed]
+module.vpc.aws_nat_gateway.this[0]: Still creating... [00m30s elapsed]
+aws_eks_cluster.this: Still creating... [00m40s elapsed]
+module.vpc.aws_nat_gateway.this[0]: Still creating... [00m40s elapsed]
+aws_eks_cluster.this: Still creating... [00m50s elapsed]
+module.vpc.aws_nat_gateway.this[0]: Still creating... [00m50s elapsed]
+aws_eks_cluster.this: Still creating... [01m00s elapsed]
+module.vpc.aws_nat_gateway.this[0]: Still creating... [01m00s elapsed]
+aws_eks_cluster.this: Still creating... [01m10s elapsed]
+module.vpc.aws_nat_gateway.this[0]: Still creating... [01m10s elapsed]
+aws_eks_cluster.this: Still creating... [01m20s elapsed]
+module.vpc.aws_nat_gateway.this[0]: Still creating... [01m20s elapsed]
+aws_eks_cluster.this: Still creating... [01m30s elapsed]
+module.vpc.aws_nat_gateway.this[0]: Still creating... [01m30s elapsed]
+aws_eks_cluster.this: Still creating... [01m40s elapsed]
+module.vpc.aws_nat_gateway.this[0]: Still creating... [01m40s elapsed]
+aws_eks_cluster.this: Still creating... [01m50s elapsed]
+module.vpc.aws_nat_gateway.this[0]: Still creating... [01m50s elapsed]
+aws_eks_cluster.this: Still creating... [02m00s elapsed]
+module.vpc.aws_nat_gateway.this[0]: Creation complete after 1m56s [id=nat-0275584dfce3ee48a]
+module.vpc.aws_route.private_nat_gateway[0]: Creating...
+module.vpc.aws_route.private_nat_gateway[0]: Creation complete after 1s [id=r-rtb-0638a194ba268474d1080289494]
+aws_eks_cluster.this: Still creating... [02m10s elapsed]
+aws_eks_cluster.this: Still creating... [02m20s elapsed]
+aws_eks_cluster.this: Still creating... [02m30s elapsed]
+aws_eks_cluster.this: Still creating... [02m40s elapsed]
+aws_eks_cluster.this: Still creating... [02m50s elapsed]
+aws_eks_cluster.this: Still creating... [03m00s elapsed]
+aws_eks_cluster.this: Still creating... [03m10s elapsed]
+aws_eks_cluster.this: Still creating... [03m20s elapsed]
+aws_eks_cluster.this: Still creating... [03m30s elapsed]
+aws_eks_cluster.this: Still creating... [03m40s elapsed]
+aws_eks_cluster.this: Still creating... [03m50s elapsed]
+aws_eks_cluster.this: Still creating... [04m00s elapsed]
+aws_eks_cluster.this: Still creating... [04m10s elapsed]
+aws_eks_cluster.this: Still creating... [04m20s elapsed]
+aws_eks_cluster.this: Still creating... [04m30s elapsed]
+aws_eks_cluster.this: Still creating... [04m40s elapsed]
+aws_eks_cluster.this: Still creating... [04m50s elapsed]
+aws_eks_cluster.this: Still creating... [05m00s elapsed]
+aws_eks_cluster.this: Still creating... [05m10s elapsed]
+aws_eks_cluster.this: Still creating... [05m20s elapsed]
+aws_eks_cluster.this: Still creating... [05m30s elapsed]
+aws_eks_cluster.this: Still creating... [05m40s elapsed]
+aws_eks_cluster.this: Still creating... [05m50s elapsed]
+aws_eks_cluster.this: Still creating... [06m00s elapsed]
+aws_eks_cluster.this: Still creating... [06m10s elapsed]
+aws_eks_cluster.this: Still creating... [06m20s elapsed]
+aws_eks_cluster.this: Still creating... [06m30s elapsed]
+aws_eks_cluster.this: Still creating... [06m40s elapsed]
+aws_eks_cluster.this: Still creating... [06m50s elapsed]
+aws_eks_cluster.this: Still creating... [07m00s elapsed]
+aws_eks_cluster.this: Still creating... [07m10s elapsed]
+aws_eks_cluster.this: Still creating... [07m20s elapsed]
+aws_eks_cluster.this: Still creating... [07m30s elapsed]
+aws_eks_cluster.this: Still creating... [07m40s elapsed]
+aws_eks_cluster.this: Still creating... [07m50s elapsed]
+aws_eks_cluster.this: Still creating... [08m00s elapsed]
+aws_eks_cluster.this: Still creating... [08m10s elapsed]
+aws_eks_cluster.this: Still creating... [08m20s elapsed]
+aws_eks_cluster.this: Still creating... [08m30s elapsed]
+aws_eks_cluster.this: Still creating... [08m40s elapsed]
+aws_eks_cluster.this: Still creating... [08m50s elapsed]
+aws_eks_cluster.this: Still creating... [09m00s elapsed]
+aws_eks_cluster.this: Still creating... [09m10s elapsed]
+aws_eks_cluster.this: Still creating... [09m20s elapsed]
+aws_eks_cluster.this: Still creating... [09m30s elapsed]
+aws_eks_cluster.this: Still creating... [09m40s elapsed]
+aws_eks_cluster.this: Still creating... [09m50s elapsed]
+aws_eks_cluster.this: Still creating... [10m00s elapsed]
+aws_eks_cluster.this: Still creating... [10m10s elapsed]
+aws_eks_cluster.this: Still creating... [10m20s elapsed]
+aws_eks_cluster.this: Still creating... [10m30s elapsed]
+aws_eks_cluster.this: Still creating... [10m40s elapsed]
+aws_eks_cluster.this: Creation complete after 10m43s [id=silver-stack-eks]
+data.tls_certificate.eks: Reading...
+aws_eks_addon.pod_identity_agent: Creating...
+aws_eks_addon.vpc_cni: Creating...
+aws_eks_addon.kube_proxy: Creating...
+data.tls_certificate.eks: Read complete after 0s [id=b1b539daa206035ae3c3e28288b0681fa1b462f3]
+aws_iam_openid_connect_provider.eks: Creating...
+aws_iam_openid_connect_provider.eks: Creation complete after 1s [id=arn:aws:iam::767397778924:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/677F72CBA6954E8E7101D1561406C8D1]
+aws_eks_addon.pod_identity_agent: Creation complete after 9s [id=silver-stack-eks:eks-pod-identity-agent]
+aws_eks_addon.kube_proxy: Creation complete after 9s [id=silver-stack-eks:kube-proxy]
+aws_eks_addon.vpc_cni: Still creating... [00m10s elapsed]
+aws_eks_addon.vpc_cni: Creation complete after 15s [id=silver-stack-eks:vpc-cni]
+
+Apply complete! Resources: 44 added, 0 changed, 0 destroyed.
+
+Outputs:
+
+aws_account_id = "767397778924"
+aws_region = "us-east-1"
+bastion_ami_id = "ami-0b6d9d3d33ba97d99"
+bastion_public_ip = "3.88.19.104"
+bastion_ssh_command = "ssh -i silver-stack-eks-bastion-key.pem ubuntu@3.88.19.104"
+cluster_certificate_authority_data = <sensitive>
+cluster_endpoint = "https://677F72CBA6954E8E7101D1561406C8D1.gr7.us-east-1.eks.amazonaws.com"
+cluster_name = "silver-stack-eks"
+cluster_oidc_issuer_url = "https://oidc.eks.us-east-1.amazonaws.com/id/677F72CBA6954E8E7101D1561406C8D1"
+eks_node_role_arn = "arn:aws:iam::767397778924:role/eksNodeRole"
+kubeconfig_command = "aws eks update-kubeconfig --region us-east-1 --name silver-stack-eks"
+private_subnet_ids = [
+  "subnet-01fecb4141cb9d358",
+  "subnet-0adf734bbf846258b",
+  "subnet-041714e812d912590",
+]
+public_subnet_ids = [
+  "subnet-01b060dbc0f4ff85f",
+  "subnet-0a6bf168b421896a7",
+  "subnet-0d52099749170ea2c",
+]
+vpc_cidr = "10.0.0.0/16"
+vpc_id = "vpc-0d9ea9360da788c1a"
+
+ibtisam@dev-machine:~/silver-stack/terraform/aws/eks-kodekloud $ ls silver-stack-eks-bastion-key.pem 
+silver-stack-eks-bastion-key.pem
+
+ibtisam@dev-machine:~/silver-stack/terraform/aws/eks-kodekloud $ 

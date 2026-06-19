@@ -1,0 +1,220 @@
+# Phase 5: Monitoring Stack Installation
+# Prometheus, Grafana, Alertmanager
+# Exposed Grafana & Prometheus via HttpRoute
+
+
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo$ cd addons/kube-prometheus/
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/kube-prometheus$ ls
+httproute-grafana.yaml  httproute-prometheus.yaml  patch-values.yaml  target-grp-grafana.yaml  target-grp-prometheus.yaml
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/kube-prometheus$ cat patch-values.yaml 
+# Helm values patch for kube-prometheus-stack chart
+# Release name: kube-prometheus-stack
+# Chart: prometheus-community/kube-prometheus-stack
+# Namespace: monitoring
+#
+# Apply with:
+#   helm upgrade -i kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+#     --version 86.2.3 -f patch-values.yaml -n monitoring --create-namespace
+
+# ── Alertmanager ────────────────────────────────────────────────────────────
+alertmanager:
+  alertmanagerSpec:
+    # Mount the Kubernetes Secret that holds the Slack incoming webhook URL.
+    # Secret is created before installing the chart:
+    #   kubectl create secret generic alertmanager-slack-webhook \
+    #     --from-literal=slack-webhook-url="<webhook-url>" \
+    #     -n monitoring
+    secrets:
+      - alertmanager-slack-webhook
+
+  config:
+    route:
+      receiver: 'email-default'     # default for non‑critical alerts
+
+      routes:
+        - receiver: 'slack-notification'
+          matchers:
+            - severity = "critical"
+
+    receivers:
+      - name: 'slack-notification'
+        slack_configs:
+          - api_url_file: /etc/alertmanager/secrets/alertmanager-slack-webhook/slack-webhook-url
+            channel: '#alertmanager'
+            send_resolved: true
+
+      - name: 'email-default'
+        email_configs:
+          - to: [EMAIL_ADDRESS]          
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/kube-prometheus$ vi patch-values.yaml
+
+
+------------------------------------------------------------------------------------------------------------------------------
+
+
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/kube-prometheus$ helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update prometheus-community
+"prometheus-community" has been added to your repositories
+Hang tight while we grab the latest from your chart repositories...
+...Successfully got an update from the "prometheus-community" chart repository
+Update Complete. ⎈Happy Helming!⎈
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/kube-prometheus$ kubectl create secret generic alertmanager-slack-webhook \
+  --from-literal=slack-webhook-url="<REDACTED>" \
+  -n monitoring
+secret/alertmanager-slack-webhook created
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/kube-prometheus$ k get secret -n monitoring 
+NAME                              TYPE     DATA   AGE
+alertmanager-slack-webhook        Opaque   1      18s
+kube-prometheus-stack-admission   Opaque   3      3m31s
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/kube-prometheus$ helm upgrade -i kube-prometheus-stack prometheus-community/kube-prometheus-stack --version 86.2.3 -f patch-values.yaml -n monitoring --create-namespace
+Release "kube-prometheus-stack" does not exist. Installing it now.
+NAME: kube-prometheus-stack
+LAST DEPLOYED: Thu Jun 18 15:54:28 2026
+NAMESPACE: monitoring
+STATUS: deployed
+REVISION: 1
+DESCRIPTION: Install complete
+TEST SUITE: None
+NOTES:
+kube-prometheus-stack has been installed. Check its status by running:
+  kubectl --namespace monitoring get pods -l "release=kube-prometheus-stack"
+
+Get Grafana 'admin' user password by running:
+
+  kubectl --namespace monitoring get secrets kube-prometheus-stack-grafana -o jsonpath="{.data.admin-password}" | base64 -d ; echo
+
+Access Grafana local instance:
+
+  export POD_NAME=$(kubectl --namespace monitoring get pod -l "app.kubernetes.io/name=grafana,app.kubernetes.io/instance=kube-prometheus-stack" -oname)
+  kubectl --namespace monitoring port-forward $POD_NAME 3000
+
+Get your grafana admin user password by running:
+
+  kubectl get secret --namespace monitoring -l app.kubernetes.io/component=admin-secret -o jsonpath="{.items[0].data.admin-password}" | base64 --decode ; echo
+
+
+Visit https://github.com/prometheus-operator/kube-prometheus for instructions on how to create & configure Alertmanager and Prometheus instances using the Operator.
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/kube-prometheus$ kubectl get secret --namespace monitoring -l app.kubernetes.io/component=admin-secret -o jsonpath="{.items[0].data.admin-password}" | base64 --decode ; echo
+<REDACTED>
+
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/kube-prometheus$ k get svc -n monitoring 
+NAME                                             TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)             AGE
+kube-prometheus-stack-alertmanager               ClusterIP   172.20.83.134    <none>        9093/TCP,8080/TCP   112s
+kube-prometheus-stack-grafana                    ClusterIP   172.20.243.185   <none>        80/TCP              112s
+kube-prometheus-stack-kube-state-metrics         ClusterIP   172.20.77.246    <none>        8080/TCP            112s
+kube-prometheus-stack-operator                   ClusterIP   172.20.178.15    <none>        443/TCP             112s
+kube-prometheus-stack-prometheus                 ClusterIP   172.20.234.163   <none>        9090/TCP,8080/TCP   112s
+kube-prometheus-stack-prometheus-node-exporter   ClusterIP   172.20.3.97      <none>        9100/TCP            112s
+prometheus-operated                              ClusterIP   None             <none>        9090/TCP            108s
+
+
+------------------------------------------------------------------------------------------------------------------------------
+
+
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/kube-prometheus$ ls
+httproute-grafana.yaml  httproute-prometheus.yaml  patch-values.yaml  target-grp-grafana.yaml  target-grp-prometheus.yaml
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/kube-prometheus$ cat httproute-grafana.yaml 
+# HTTPRoute — exposes Grafana through the shared ALB Gateway
+# Hostname: grafana.ibtisam.qzz.io
+# Backend:  kube-prometheus-stack-grafana Service (port 80)
+#           Created by the kube-prometheus-stack Helm chart.
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: HTTPRoute
+metadata:
+  name: grafana-route
+  namespace: monitoring
+spec:
+  hostnames:
+    - "grafana.ibtisam.qzz.io"
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      namespace: default
+      kind: Gateway
+      name: app-alb-gateway
+      sectionName: http
+    - group: gateway.networking.k8s.io
+      namespace: default
+      kind: Gateway
+      name: app-alb-gateway
+      sectionName: https
+  rules:
+    - backendRefs:
+        - name: kube-prometheus-stack-grafana
+          port: 80
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/kube-prometheus$ cat target-grp-grafana.yaml 
+# TargetGroupConfiguration — registers Grafana pods as ALB targets
+# targetReference matches the Service name created by the chart.
+# targetType: ip → ALB route directly to pod IPs (required for ClusterIP Services).
+apiVersion: gateway.k8s.aws/v1beta1
+kind: TargetGroupConfiguration
+metadata:
+  name: grafana-tg-config
+  namespace: monitoring
+spec:
+  targetReference:
+    name: kube-prometheus-stack-grafana
+  defaultConfiguration:
+    targetType: ip
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/kube-prometheus$ cat httproute-prometheus.yaml 
+# HTTPRoute — exposes Prometheus through the shared ALB Gateway
+# Hostname: prometheus.ibtisam.qzz.io
+# Backend:  kube-prometheus-stack-prometheus Service (port 9090)
+#           Created by the kube-prometheus-stack Helm chart.
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: HTTPRoute
+metadata:
+  name: prometheus-route
+  namespace: monitoring
+spec:
+  hostnames:
+    - "prometheus.ibtisam.qzz.io"
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      namespace: default
+      kind: Gateway
+      name: app-alb-gateway
+      sectionName: http
+    - group: gateway.networking.k8s.io
+      namespace: default
+      kind: Gateway
+      name: app-alb-gateway
+      sectionName: https
+  rules:
+    - backendRefs:
+        - name: kube-prometheus-stack-prometheus
+          port: 9090
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/kube-prometheus$ cat target-grp-prometheus.yaml 
+# TargetGroupConfiguration — registers Prometheus pods as ALB targets
+# targetReference matches the Service name created by the chart.
+# targetType: ip → ALB route directly to pod IPs (required for ClusterIP Services).
+apiVersion: gateway.k8s.aws/v1beta1
+kind: TargetGroupConfiguration
+metadata:
+  name: prometheus-tg-config
+  namespace: monitoring
+spec:
+  targetReference:
+    name: kube-prometheus-stack-prometheus
+  defaultConfiguration:
+    targetType: ip
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/kube-prometheus$ cat << 'EOF' >> kustomization.yaml
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - httproute-grafana.yaml
+  - target-grp-grafana.yaml
+  - httproute-prometheus.yaml
+  - target-grp-prometheus.yaml
+EOF
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/kube-prometheus$ k apply -k .
+targetgroupconfiguration.gateway.k8s.aws/grafana-tg-config created
+targetgroupconfiguration.gateway.k8s.aws/prometheus-tg-config created
+httproute.gateway.networking.k8s.io/grafana-route created
+httproute.gateway.networking.k8s.io/prometheus-route created
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/kube-prometheus$ k get httproutes.gateway.networking.k8s.io -A
+NAMESPACE      NAME               HOSTNAMES                       AGE
+argocd         argocd-server      ["argocd.ibtisam.qzz.io"]       45m
+boutique-app   http-app-route     ["app.ibtisam.qzz.io"]          35m
+monitoring     grafana-route      ["grafana.ibtisam.qzz.io"]      2m15s
+monitoring     prometheus-route   ["prometheus.ibtisam.qzz.io"]   2m15s

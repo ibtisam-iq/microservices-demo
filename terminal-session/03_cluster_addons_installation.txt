@@ -1,0 +1,487 @@
+# Phase 3: Cluster Add-ons Installation
+# - AWS Load Balancer Controller
+# - EBS CSI Driver
+# - Gateway API
+# - ExternalDNS
+# - Metrics Server (I forgot, so installed in Phase 7)
+
+ubuntu@ip-10-0-101-70:~$ export CLUSTER_NAME=silver-stack-eks
+export REGION=us-east-1
+export ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+export VPC_ID=$(aws eks describe-cluster \
+  --name "$CLUSTER_NAME" \
+  --query "cluster.resourcesVpcConfig.vpcId" \
+  --output text)
+ubuntu@ip-10-0-101-70:~$ eksctl utils associate-iam-oidc-provider \
+  --region $REGION \
+  --cluster "$CLUSTER_NAME" \
+  --approve
+
+curl -O https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v2.14.1/docs/install/iam_policy.json
+
+aws iam create-policy \
+  --policy-name AWSLoadBalancerControllerIAMPolicy \
+  --policy-document file://iam_policy.json
+
+eksctl create iamserviceaccount \
+  --cluster=$CLUSTER_NAME \
+  --namespace=kube-system \
+  --name=aws-load-balancer-controller \
+  --attach-policy-arn=arn:aws:iam::$ACCOUNT_ID:policy/AWSLoadBalancerControllerIAMPolicy \
+  --role-name aws-load-balancer-controller \
+  --override-existing-serviceaccounts \
+  --region $REGION \
+  --approve
+
+helm repo add eks https://aws.github.io/eks-charts
+helm repo update eks
+
+helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
+  --namespace kube-system \
+  --set clusterName="$CLUSTER_NAME" \
+  --set region="$REGION" \
+  --set vpcId="$VPC_ID" \
+  --set serviceAccount.create=false \
+  --set serviceAccount.name=aws-load-balancer-controller \
+  --set controllerConfig.featureGates.NLBGatewayAPI=true \
+  --set controllerConfig.featureGates.ALBGatewayAPI=true \
+  --version 1.14.0
+
+sleep 30
+
+kubectl get deploy -n kube-system aws-load-balancer-controller
+kubectl get sa -n kube-system aws-load-balancer-controller
+kubectl get sa -n kube-system aws-load-balancer-controller -o yaml | grep role-arn
+kubectl get endpoints -n kube-system aws-load-balancer-webhook-service
+2026-06-18 14:55:33 [ℹ]  IAM Open ID Connect provider is already associated with cluster "silver-stack-eks" in "us-east-1"
+  % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
+                                 Dload  Upload  Total   Spent   Left   Speed
+100   8955 100   8955   0      0 115.3k      0                              0
+{
+    "Policy": {
+        "PolicyName": "AWSLoadBalancerControllerIAMPolicy",
+        "PolicyId": "ANPA3FLDY2XWMSKNL2TVJ",
+        "Arn": "arn:aws:iam::767397778924:policy/AWSLoadBalancerControllerIAMPolicy",
+        "Path": "/",
+        "DefaultVersionId": "v1",
+        "AttachmentCount": 0,
+        "PermissionsBoundaryUsageCount": 0,
+        "IsAttachable": true,
+        "CreateDate": "2026-06-18T14:55:34+00:00",
+        "UpdateDate": "2026-06-18T14:55:34+00:00"
+    }
+}
+2026-06-18 14:55:35 [ℹ]  1 iamserviceaccount (kube-system/aws-load-balancer-controller) was included (based on the include/exclude rules)
+2026-06-18 14:55:35 [!]  metadata of serviceaccounts that exist in Kubernetes will be updated, as --override-existing-serviceaccounts was set
+2026-06-18 14:55:35 [ℹ]  1 task: { 
+    2 sequential sub-tasks: { 
+        create IAM role for serviceaccount "kube-system/aws-load-balancer-controller",
+        create serviceaccount "kube-system/aws-load-balancer-controller",
+    } }2026-06-18 14:55:35 [ℹ]  building iamserviceaccount stack "eksctl-silver-stack-eks-addon-iamserviceaccount-kube-system-aws-load-balancer-controller"
+2026-06-18 14:55:35 [ℹ]  deploying stack "eksctl-silver-stack-eks-addon-iamserviceaccount-kube-system-aws-load-balancer-controller"
+2026-06-18 14:55:35 [ℹ]  waiting for CloudFormation stack "eksctl-silver-stack-eks-addon-iamserviceaccount-kube-system-aws-load-balancer-controller"
+2026-06-18 14:56:05 [ℹ]  waiting for CloudFormation stack "eksctl-silver-stack-eks-addon-iamserviceaccount-kube-system-aws-load-balancer-controller"
+2026-06-18 14:56:05 [ℹ]  created serviceaccount "kube-system/aws-load-balancer-controller"
+"eks" has been added to your repositories
+Hang tight while we grab the latest from your chart repositories...
+...Successfully got an update from the "eks" chart repository
+Update Complete. ⎈Happy Helming!⎈
+NAME: aws-load-balancer-controller
+LAST DEPLOYED: Thu Jun 18 14:56:17 2026
+NAMESPACE: kube-system
+STATUS: deployed
+REVISION: 1
+DESCRIPTION: Install complete
+TEST SUITE: None
+NOTES:
+AWS Load Balancer controller installed!
+NAME                           READY   UP-TO-DATE   AVAILABLE   AGE
+aws-load-balancer-controller   2/2     2            2           32s
+NAME                           AGE
+aws-load-balancer-controller   48s
+    eks.amazonaws.com/role-arn: arn:aws:iam::767397778924:role/aws-load-balancer-controller
+Warning: v1 Endpoints is deprecated in v1.33+; use discovery.k8s.io/v1 EndpointSlice
+NAME                                ENDPOINTS                        AGE
+aws-load-balancer-webhook-service   10.0.1.36:9443,10.0.2.163:9443   34s
+
+
+------------------------------------------------------------------------------------------------------------------ 
+
+
+ubuntu@ip-10-0-101-70:~$ export CLUSTER_NAME=silver-stack-eks
+ubuntu@ip-10-0-101-70:~$ eksctl create iamserviceaccount \
+  --name ebs-csi-controller-sa \
+  --namespace kube-system \
+  --cluster $CLUSTER_NAME \
+  --role-name AmazonEKS_EBS_CSI_DriverRole \
+  --role-only \
+  --attach-policy-arn arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy \
+  --approve
+
+ROLE_ARN=$(aws iam get-role --role-name AmazonEKS_EBS_CSI_DriverRole --query "Role.Arn" --output text)
+2026-06-18 14:58:28 [ℹ]  1 existing iamserviceaccount(s) (kube-system/aws-load-balancer-controller) will be excluded
+2026-06-18 14:58:28 [ℹ]  1 iamserviceaccount (kube-system/ebs-csi-controller-sa) was included (based on the include/exclude rules)
+2026-06-18 14:58:28 [!]  serviceaccounts in Kubernetes will not be created or modified, since the option --role-only is used
+2026-06-18 14:58:28 [ℹ]  1 task: { create IAM role for serviceaccount "kube-system/ebs-csi-controller-sa" }
+2026-06-18 14:58:28 [ℹ]  building iamserviceaccount stack "eksctl-silver-stack-eks-addon-iamserviceaccount-kube-system-ebs-csi-controller-sa"
+2026-06-18 14:58:28 [ℹ]  deploying stack "eksctl-silver-stack-eks-addon-iamserviceaccount-kube-system-ebs-csi-controller-sa"
+2026-06-18 14:58:28 [ℹ]  waiting for CloudFormation stack "eksctl-silver-stack-eks-addon-iamserviceaccount-kube-system-ebs-csi-controller-sa"
+2026-06-18 14:58:58 [ℹ]  waiting for CloudFormation stack "eksctl-silver-stack-eks-addon-iamserviceaccount-kube-system-ebs-csi-controller-sa"
+ubuntu@ip-10-0-101-70:~$ aws eks create-addon \
+  --cluster-name $CLUSTER_NAME \
+  --addon-name aws-ebs-csi-driver \
+  --resolve-conflicts "OVERWRITE"
+
+sleep 15
+
+kubectl annotate serviceaccount ebs-csi-controller-sa \
+  -n kube-system \
+  eks.amazonaws.com/role-arn=$ROLE_ARN \
+  --overwrite
+
+kubectl rollout restart deployment ebs-csi-controller -n kube-system
+kubectl rollout status deployment ebs-csi-controller -n kube-system
+
+sleep 15
+
+aws eks describe-addon \
+  --cluster-name $CLUSTER_NAME \
+  --addon-name aws-ebs-csi-driver \
+  --query "addon.status"
+
+kubectl get deploy -n kube-system | grep ebs-csi
+kubectl get sa -n kube-system | grep ebs-csi-controller-sa
+kubectl get storageclass
+kubectl get sa ebs-csi-controller-sa -n kube-system -o yaml | grep role-arn
+{
+    "addon": {
+        "addonName": "aws-ebs-csi-driver",
+        "clusterName": "silver-stack-eks",
+        "status": "CREATING",
+        "addonVersion": "v1.62.0-eksbuild.1",
+        "health": {
+            "issues": []
+        },
+        "addonArn": "arn:aws:eks:us-east-1:767397778924:addon/silver-stack-eks/aws-ebs-csi-driver/7ccf6d9f-b035-76b7-23de-7873cc6b40f0",
+        "createdAt": "2026-06-18T15:00:24.428000+00:00",
+        "modifiedAt": "2026-06-18T15:00:24.444000+00:00",
+        "tags": {},
+        "namespaceConfig": {
+            "namespace": "kube-system"
+        }
+    }
+}
+serviceaccount/ebs-csi-controller-sa annotated
+deployment.apps/ebs-csi-controller restarted
+Waiting for deployment "ebs-csi-controller" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "ebs-csi-controller" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "ebs-csi-controller" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "ebs-csi-controller" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "ebs-csi-controller" rollout to finish: 1 of 2 updated replicas are available...
+Waiting for deployment "ebs-csi-controller" rollout to finish: 1 of 2 updated replicas are available...
+deployment "ebs-csi-controller" successfully rolled out
+"ACTIVE"
+ebs-csi-controller             2/2     2            2           45s
+ebs-csi-controller-sa                         48s
+NAME   PROVISIONER             RECLAIMPOLICY   VOLUMEBINDINGMODE      ALLOWVOLUMEEXPANSION   AGE
+gp2    kubernetes.io/aws-ebs   Delete          WaitForFirstConsumer   false                  36m
+    eks.amazonaws.com/role-arn: arn:aws:iam::767397778924:role/AmazonEKS_EBS_CSI_DriverRole
+ubuntu@ip-10-0-101-70:~$ k get sc
+NAME   PROVISIONER             RECLAIMPOLICY   VOLUMEBINDINGMODE      ALLOWVOLUMEEXPANSION   AGE
+gp2    kubernetes.io/aws-ebs   Delete          WaitForFirstConsumer   false                  38m
+ubuntu@ip-10-0-101-70:~$ # Migrate default StorageClass from gp2 to gp3
+cat <<EOF | kubectl apply -f -
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: gp3
+  annotations:
+    storageclass.kubernetes.io/is-default-class: "true"
+provisioner: ebs.csi.aws.com
+parameters:
+  type: gp3
+  fsType: ext4
+reclaimPolicy: Delete
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+EOF
+
+kubectl patch storageclass gp2 -p \
+  '{"metadata": {"annotations": {"storageclass.kubernetes.io/is-default-class": "false"}}}'
+
+kubectl get sc
+storageclass.storage.k8s.io/gp3 created
+storageclass.storage.k8s.io/gp2 patched
+NAME            PROVISIONER             RECLAIMPOLICY   VOLUMEBINDINGMODE      ALLOWVOLUMEEXPANSION   AGE
+gp2             kubernetes.io/aws-ebs   Delete          WaitForFirstConsumer   false                  39m
+gp3 (default)   ebs.csi.aws.com         Delete          WaitForFirstConsumer   true                   2s
+ubuntu@ip-10-0-101-70:~$ 
+
+
+------------------------------------------------------------------------------------------------------------------
+
+
+ubuntu@ip-10-0-101-70:~$ export REGION=$(aws configure get region)
+export CERT_DOMAIN="ibtisam.qzz.io"       # domain used to issue the ACM cert
+export ROUTE_DOMAIN="ibtisam.qzz.io"  # domain used in HTTPRoute / Gateway listeners
+
+export CERT_ARN=$(aws acm list-certificates \
+  --region "$REGION" \
+  --query "CertificateSummaryList[?DomainName=='${CERT_DOMAIN}'].CertificateArn | [0]" \
+  --output text)
+
+echo "CERT_ARN: $CERT_ARN"
+CERT_ARN: arn:aws:acm:us-east-1:767397778924:certificate/47da9369-a997-4197-9f4b-60b426a112a3
+ubuntu@ip-10-0-101-70:~$ # Step 1: Standard CRDs
+kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.3.0/standard-install.yaml
+
+# Step 2: Experimental CRDs (L4 routes for NLB)
+kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.3.0/experimental-install.yaml
+
+# Step 3: LBC-specific CRDs
+kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/refs/heads/main/config/crd/gateway/gateway-crds.yaml
+
+# Verify all CRDs
+kubectl get crds | grep -E 'gateway.networking.k8s.io|gateway.k8s.aws'
+
+mkdir -p k8s/gateway-api
+
+cat <<'EOF' > k8s/gateway-api/gateway-config.yaml
+---
+# Step 4 — GatewayClass
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: GatewayClass
+metadata:
+  name: aws-alb-gateway-class
+spec:
+  controllerName: gateway.k8s.aws/alb
+---
+# Step 5 — LoadBalancerConfiguration
+apiVersion: gateway.k8s.aws/v1beta1
+kind: LoadBalancerConfiguration
+metadata:
+  name: app-gw-lbconfig
+  namespace: default
+spec:
+  scheme: internet-facing
+  listenerConfigurations:
+    - protocolPort: HTTPS:443
+      defaultCertificate: "${CERT_ARN}"
+---
+# Step 6 — Gateway
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: Gateway
+metadata:
+  name: app-alb-gateway
+  namespace: default
+spec:
+  gatewayClassName: aws-alb-gateway-class
+  infrastructure:
+    parametersRef:
+      kind: LoadBalancerConfiguration
+      name: app-gw-lbconfig
+      group: gateway.k8s.aws
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      hostname: "*.${ROUTE_DOMAIN}"
+      allowedRoutes:
+        namespaces:
+          from: All
+    - name: https
+      protocol: HTTPS
+      port: 443
+      hostname: "*.${ROUTE_DOMAIN}"
+      allowedRoutes:
+        namespaces:
+          from: All
+EOF
+
+envsubst < k8s/gateway-api/gateway-config.yaml \
+  > k8s/gateway-api/gateway-config-rendered.yaml
+
+kubectl apply -f k8s/gateway-api/gateway-config-rendered.yaml
+
+# Step 7: Verify
+kubectl get gatewayclass
+kubectl get gateway -n default        # usually requires 5 min to turn True
+kubectl get loadbalancerconfiguration -n default
+customresourcedefinition.apiextensions.k8s.io/gatewayclasses.gateway.networking.k8s.io created
+customresourcedefinition.apiextensions.k8s.io/gateways.gateway.networking.k8s.io created
+customresourcedefinition.apiextensions.k8s.io/grpcroutes.gateway.networking.k8s.io created
+customresourcedefinition.apiextensions.k8s.io/httproutes.gateway.networking.k8s.io created
+customresourcedefinition.apiextensions.k8s.io/referencegrants.gateway.networking.k8s.io created
+customresourcedefinition.apiextensions.k8s.io/backendtlspolicies.gateway.networking.k8s.io created
+customresourcedefinition.apiextensions.k8s.io/gatewayclasses.gateway.networking.k8s.io configured
+customresourcedefinition.apiextensions.k8s.io/gateways.gateway.networking.k8s.io configured
+customresourcedefinition.apiextensions.k8s.io/grpcroutes.gateway.networking.k8s.io configured
+customresourcedefinition.apiextensions.k8s.io/httproutes.gateway.networking.k8s.io configured
+customresourcedefinition.apiextensions.k8s.io/referencegrants.gateway.networking.k8s.io configured
+customresourcedefinition.apiextensions.k8s.io/tcproutes.gateway.networking.k8s.io created
+customresourcedefinition.apiextensions.k8s.io/tlsroutes.gateway.networking.k8s.io created
+customresourcedefinition.apiextensions.k8s.io/udproutes.gateway.networking.k8s.io created
+customresourcedefinition.apiextensions.k8s.io/xbackendtrafficpolicies.gateway.networking.x-k8s.io created
+customresourcedefinition.apiextensions.k8s.io/xlistenersets.gateway.networking.x-k8s.io created
+Warning: resource customresourcedefinitions/listenerruleconfigurations.gateway.k8s.aws is missing the kubectl.kubernetes.io/last-applied-configuration annotation which is required by kubectl apply. kubectl apply should only be used on resources created declaratively by either kubectl create --save-config or kubectl apply. The missing annotation will be patched automatically.
+customresourcedefinition.apiextensions.k8s.io/listenerruleconfigurations.gateway.k8s.aws configured
+Warning: resource customresourcedefinitions/loadbalancerconfigurations.gateway.k8s.aws is missing the kubectl.kubernetes.io/last-applied-configuration annotation which is required by kubectl apply. kubectl apply should only be used on resources created declaratively by either kubectl create --save-config or kubectl apply. The missing annotation will be patched automatically.
+customresourcedefinition.apiextensions.k8s.io/loadbalancerconfigurations.gateway.k8s.aws configured
+Warning: resource customresourcedefinitions/targetgroupconfigurations.gateway.k8s.aws is missing the kubectl.kubernetes.io/last-applied-configuration annotation which is required by kubectl apply. kubectl apply should only be used on resources created declaratively by either kubectl create --save-config or kubectl apply. The missing annotation will be patched automatically.
+customresourcedefinition.apiextensions.k8s.io/targetgroupconfigurations.gateway.k8s.aws configured
+backendtlspolicies.gateway.networking.k8s.io          2026-06-18T15:05:38Z
+gatewayclasses.gateway.networking.k8s.io              2026-06-18T15:05:35Z
+gateways.gateway.networking.k8s.io                    2026-06-18T15:05:35Z
+grpcroutes.gateway.networking.k8s.io                  2026-06-18T15:05:36Z
+httproutes.gateway.networking.k8s.io                  2026-06-18T15:05:36Z
+listenerruleconfigurations.gateway.k8s.aws            2026-06-18T14:56:17Z
+loadbalancerconfigurations.gateway.k8s.aws            2026-06-18T14:56:17Z
+referencegrants.gateway.networking.k8s.io             2026-06-18T15:05:37Z
+targetgroupconfigurations.gateway.k8s.aws             2026-06-18T14:56:17Z
+tcproutes.gateway.networking.k8s.io                   2026-06-18T15:05:39Z
+tlsroutes.gateway.networking.k8s.io                   2026-06-18T15:05:39Z
+udproutes.gateway.networking.k8s.io                   2026-06-18T15:05:39Z
+gatewayclass.gateway.networking.k8s.io/aws-alb-gateway-class created
+loadbalancerconfiguration.gateway.k8s.aws/app-gw-lbconfig created
+gateway.gateway.networking.k8s.io/app-alb-gateway created
+NAME                    CONTROLLER            ACCEPTED   AGE
+aws-alb-gateway-class   gateway.k8s.aws/alb   True       1s
+NAME              CLASS                   ADDRESS   PROGRAMMED   AGE
+app-alb-gateway   aws-alb-gateway-class             Unknown      2s
+NAME              AGE
+app-gw-lbconfig   3s
+ubuntu@ip-10-0-101-70:~$ kubectl get gateway -n default -w       # usually requires 5 min to turn True
+NAME              CLASS                   ADDRESS                                                                  PROGRAMMED   AGE
+app-alb-gateway   aws-alb-gateway-class   k8s-default-appalbga-e77804456c-1256737212.us-east-1.elb.amazonaws.com   Unknown      25s
+app-alb-gateway   aws-alb-gateway-class   k8s-default-appalbga-e77804456c-1256737212.us-east-1.elb.amazonaws.com   True         4m6s
+^Cubuntu@ip-10-0-101-70:~$
+
+
+------------------------------------------------------------------------------------------------------------------
+
+
+ubuntu@ip-10-0-101-70:~$ export CLUSTER_NAME=silver-stack-eks
+export ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+
+cat > policy.json << 'EOF'
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "route53:ChangeResourceRecordSets",
+        "route53:ListResourceRecordSets",
+        "route53:ListTagsForResources"
+      ],
+      "Resource": ["arn:aws:route53:::hostedzone/*"]
+    },
+    {
+      "Effect": "Allow",
+      "Action": ["route53:ListHostedZones"],
+      "Resource": ["*"]
+    }
+  ]
+}
+EOF
+
+aws iam create-policy \
+  --policy-name AllowExternalDNSUpdates \
+  --policy-document file://policy.json
+
+export POLICY_ARN=$(aws iam list-policies \
+  --query 'Policies[?PolicyName==`AllowExternalDNSUpdates`].Arn' \
+  --output text)
+
+kubectl create namespace external-dns
+
+eksctl create iamserviceaccount \
+  --cluster $CLUSTER_NAME \
+  --namespace external-dns \
+  --name external-dns \
+  --attach-policy-arn $POLICY_ARN \
+  --role-name external-dns-irsa-role \
+  --override-existing-serviceaccounts \
+  --approve
+
+helm repo add external-dns https://kubernetes-sigs.github.io/external-dns/
+helm repo update external-dns
+
+mkdir -p helm-values/external-dns
+cat <<'EOF' > helm-values/external-dns/sources-patch.yaml
+sources:
+  - service
+  - ingress
+  - gateway-httproute
+  - gateway-tlsroute
+  - gateway-tcproute
+  - gateway-udproute
+EOF
+
+helm upgrade -i external-dns external-dns/external-dns \
+  --namespace external-dns \
+  --version 1.20.0 \
+  -f helm-values/external-dns/sources-patch.yaml \
+  --set serviceAccount.create=false \
+  --set serviceAccount.name=external-dns
+
+sleep 15
+
+kubectl logs -n external-dns deploy/external-dns
+{
+    "Policy": {
+        "PolicyName": "AllowExternalDNSUpdates",
+        "PolicyId": "ANPA3FLDY2XWAQ64PMEJT",
+        "Arn": "arn:aws:iam::767397778924:policy/AllowExternalDNSUpdates",
+        "Path": "/",
+        "DefaultVersionId": "v1",
+        "AttachmentCount": 0,
+        "PermissionsBoundaryUsageCount": 0,
+        "IsAttachable": true,
+        "CreateDate": "2026-06-18T15:09:14+00:00",
+        "UpdateDate": "2026-06-18T15:09:14+00:00"
+    }
+}
+namespace/external-dns created
+2026-06-18 15:09:19 [ℹ]  2 existing iamserviceaccount(s) (kube-system/aws-load-balancer-controller,kube-system/ebs-csi-controller-sa) will be excluded
+2026-06-18 15:09:19 [ℹ]  1 iamserviceaccount (external-dns/external-dns) was included (based on the include/exclude rules)
+2026-06-18 15:09:19 [!]  metadata of serviceaccounts that exist in Kubernetes will be updated, as --override-existing-serviceaccounts was set
+2026-06-18 15:09:19 [ℹ]  1 task: { 
+    2 sequential sub-tasks: { 
+        create IAM role for serviceaccount "external-dns/external-dns",
+        create serviceaccount "external-dns/external-dns",
+    } }2026-06-18 15:09:19 [ℹ]  building iamserviceaccount stack "eksctl-silver-stack-eks-addon-iamserviceaccount-external-dns-external-dns"
+2026-06-18 15:09:19 [ℹ]  deploying stack "eksctl-silver-stack-eks-addon-iamserviceaccount-external-dns-external-dns"
+2026-06-18 15:09:19 [ℹ]  waiting for CloudFormation stack "eksctl-silver-stack-eks-addon-iamserviceaccount-external-dns-external-dns"
+2026-06-18 15:09:49 [ℹ]  waiting for CloudFormation stack "eksctl-silver-stack-eks-addon-iamserviceaccount-external-dns-external-dns"
+2026-06-18 15:09:49 [ℹ]  created serviceaccount "external-dns/external-dns"
+"external-dns" has been added to your repositories
+Hang tight while we grab the latest from your chart repositories...
+...Successfully got an update from the "external-dns" chart repository
+Update Complete. ⎈Happy Helming!⎈
+Release "external-dns" does not exist. Installing it now.
+NAME: external-dns
+LAST DEPLOYED: Thu Jun 18 15:09:51 2026
+NAMESPACE: external-dns
+STATUS: deployed
+REVISION: 1
+DESCRIPTION: Install complete
+TEST SUITE: None
+NOTES:
+***********************************************************************
+* External DNS                                                        *
+***********************************************************************
+  Chart version: 1.20.0
+  App version:   0.20.0
+  Image tag:     registry.k8s.io/external-dns/external-dns:v0.20.0
+***********************************************************************
+time="2026-06-18T15:09:54Z" level=info msg="config: {APIServerURL: KubeConfig: RequestTimeout:30s DefaultTargets:[] GlooNamespaces:[gloo-system] SkipperRouteGroupVersion:zalando.org/v1 Sources:[service ingress gateway-httproute gateway-tlsroute gateway-tcproute gateway-udproute] Namespace: AnnotationFilter: AnnotationPrefix:external-dns.alpha.kubernetes.io/ LabelFilter: IngressClassNames:[] FQDNTemplate: CombineFQDNAndAnnotation:false IgnoreHostnameAnnotation:false IgnoreNonHostNetworkPods:false IgnoreIngressTLSSpec:false IgnoreIngressRulesSpec:false ListenEndpointEvents:false ExposeInternalIPV6:false GatewayName: GatewayNamespace: GatewayLabelFilter: Compatibility: PodSourceDomain: PublishInternal:false PublishHostIP:false AlwaysPublishNotReadyAddresses:false ConnectorSourceServer:localhost:8080 Provider:aws ProviderCacheTime:0s GoogleProject: GoogleBatchChangeSize:1000 GoogleBatchChangeInterval:1s GoogleZoneVisibility: DomainFilter:[] ExcludeDomains:[] RegexDomainFilter: RegexDomainExclusion: ZoneNameFilter:[] ZoneIDFilter:[] TargetNetFilter:[] ExcludeTargetNets:[] AlibabaCloudConfigFile:/etc/kubernetes/alibaba-cloud.json AlibabaCloudZoneType: AWSZoneType: AWSZoneTagFilter:[] AWSAssumeRole: AWSProfiles:[] AWSAssumeRoleExternalID: AWSBatchChangeSize:1000 AWSBatchChangeSizeBytes:32000 AWSBatchChangeSizeValues:1000 AWSBatchChangeInterval:1s AWSEvaluateTargetHealth:true AWSAPIRetries:3 AWSPreferCNAME:false AWSZoneCacheDuration:0s AWSSDServiceCleanup:false AWSSDCreateTag:map[] AWSZoneMatchParent:false AWSDynamoDBRegion: AWSDynamoDBTable:external-dns AzureConfigFile:/etc/kubernetes/azure.json AzureResourceGroup: AzureSubscriptionID: AzureUserAssignedIdentityClientID: AzureActiveDirectoryAuthorityHost: AzureZonesCacheDuration:0s AzureMaxRetriesCount:3 CloudflareProxied:false CloudflareCustomHostnames:false CloudflareDNSRecordsPerPage:100 CloudflareDNSRecordsComment: CloudflareCustomHostnamesMinTLSVersion:1.0 CloudflareCustomHostnamesCertificateAuthority:none CloudflareRegionalServices:false CloudflareRegionKey: CoreDNSPrefix:/skydns/ AkamaiServiceConsumerDomain: AkamaiClientToken: AkamaiClientSecret: AkamaiAccessToken: AkamaiEdgercPath: AkamaiEdgercSection: OCIConfigFile:/etc/kubernetes/oci.yaml OCICompartmentOCID: OCIAuthInstancePrincipal:false OCIZoneScope:GLOBAL OCIZoneCacheDuration:0s InMemoryZones:[] OVHEndpoint:ovh-eu OVHApiRateLimit:20 OVHEnableCNAMERelative:false PDNSServer:http://localhost:8081 PDNSServerID:localhost PDNSAPIKey: PDNSSkipTLSVerify:false TLSCA: TLSClientCert: TLSClientCertKey: Policy:upsert-only Registry:txt TXTOwnerID:default TXTOwnerOld: TXTPrefix: TXTSuffix: TXTEncryptEnabled:false TXTEncryptAESKey: Interval:1m0s MinEventSyncInterval:5s MinTTL:0s Once:false DryRun:false UpdateEvents:false LogFormat:text MetricsAddress::7979 LogLevel:info TXTCacheInterval:0s TXTWildcardReplacement: ExoscaleEndpoint: ExoscaleAPIKey: ExoscaleAPISecret: ExoscaleAPIEnvironment:api ExoscaleAPIZone:ch-gva-2 CRDSourceAPIVersion:externaldns.k8s.io/v1alpha1 CRDSourceKind:DNSEndpoint ServiceTypeFilter:[] CFAPIEndpoint: CFUsername: CFPassword: ResolveServiceLoadBalancerHostname:false RFC2136Host:[] RFC2136Port:0 RFC2136Zone:[] RFC2136Insecure:false RFC2136GSSTSIG:false RFC2136CreatePTR:false RFC2136KerberosRealm: RFC2136KerberosUsername: RFC2136KerberosPassword: RFC2136TSIGKeyName: RFC2136TSIGSecret: RFC2136TSIGSecretAlg: RFC2136TAXFR:false RFC2136MinTTL:0s RFC2136LoadBalancingStrategy:disabled RFC2136BatchChangeSize:50 RFC2136UseTLS:false RFC2136SkipTLSVerify:false NS1Endpoint: NS1IgnoreSSL:false NS1MinTTLSeconds:0 TransIPAccountName: TransIPPrivateKeyFile: DigitalOceanAPIPageSize:50 ManagedDNSRecordTypes:[A AAAA CNAME] ExcludeDNSRecordTypes:[] GoDaddyAPIKey: GoDaddySecretKey: GoDaddyTTL:0 GoDaddyOTE:false OCPRouterName: PiholeServer: PiholePassword: PiholeTLSInsecureSkipVerify:false PiholeApiVersion:5 PluralCluster: PluralProvider: WebhookProviderURL:http://localhost:8888 WebhookProviderReadTimeout:5s WebhookProviderWriteTimeout:10s WebhookServer:false TraefikEnableLegacy:false TraefikDisableNew:false NAT64Networks:[] ExcludeUnschedulable:true EmitEvents:[] ForceDefaultTargets:false}"
+time="2026-06-18T15:09:54Z" level=info msg="GitCommitShort=unknown, GoVersion=go1.25.4, Platform=linux/amd64, UserAgent=ExternalDNS/v20251114-v0.20.0"
+time="2026-06-18T15:09:54Z" level=info msg="Instantiating new Kubernetes client"
+time="2026-06-18T15:09:54Z" level=info msg="Using inCluster-config based on serviceaccount-token"
+time="2026-06-18T15:09:54Z" level=info msg="Created Kubernetes client https://172.20.0.1:443"
+time="2026-06-18T15:09:54Z" level=info msg="Using inCluster-config based on serviceaccount-token"
+time="2026-06-18T15:09:54Z" level=info msg="Created GatewayAPI client https://172.20.0.1:443"
+time="2026-06-18T15:09:55Z" level=info msg="Applying provider record filter for domains: [ibtisam.qzz.io. .ibtisam.qzz.io.]"
+time="2026-06-18T15:09:55Z" level=info msg="All records are already up to date"
+ubuntu@ip-10-0-101-70:~$ 

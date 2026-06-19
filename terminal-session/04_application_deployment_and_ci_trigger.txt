@@ -1,0 +1,491 @@
+# Phase 4: Application Deployment and CI Trigger
+# - Clone CD repository
+# - Install Argo CD
+# - Apply Argo CD application.yaml (kubectl apply -f)
+# - Trigger CI pipeline
+# - Image pushed and Auto-detected by image updater
+
+
+ubuntu@ip-10-0-101-70:~$ git clone https://github.com/ibtisam-iq/platform-engineering-systems.git
+Cloning into 'platform-engineering-systems'...
+remote: Enumerating objects: 843, done.
+remote: Counting objects: 100% (201/201), done.
+remote: Compressing objects: 100% (150/150), done.
+remote: Total 843 (delta 107), reused 102 (delta 36), pack-reused 642 (from 1)
+Receiving objects: 100% (843/843), 193.64 KiB | 10.19 MiB/s, done.
+Resolving deltas: 100% (362/362), done.
+ubuntu@ip-10-0-101-70:~$ cd platform-engineering-systems/
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems$ cd systems/microservices-demo/
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo$ tree
+.
+├── addons
+│   ├── argocd
+│   │   ├── README.md
+│   │   ├── patch-values.yaml
+│   │   └── target-grp-config.yaml
+│   ├── elastic-logging
+│   │   ├── httproute-kibana.yaml
+│   │   ├── patch-values-elasticsearch.yaml
+│   │   ├── patch-values-filebeat.yaml
+│   │   ├── patch-values-kibana.yaml
+│   │   ├── storage-class-gp3.yaml
+│   │   └── target-grp-kibana.yaml
+│   ├── external-dns
+│   │   ├── policy.json
+│   │   └── source-patches.yaml
+│   ├── gateway-api
+│   │   ├── alb-config.yaml
+│   │   ├── gateway-class.yaml
+│   │   └── gateway.yaml
+│   ├── image-updater
+│   │   ├── README.md
+│   │   └── image-updater.yaml
+│   └── kube-prometheus
+│       ├── httproute-grafana.yaml
+│       ├── httproute-prometheus.yaml
+│       ├── patch-values.yaml
+│       ├── target-grp-grafana.yaml
+│       └── target-grp-prometheus.yaml
+├── app
+├── application.yaml
+├── chart
+│   └── values-eks.yaml
+├── kustomization.yaml
+├── manifests
+│   ├── hpa-frontend.yaml
+│   ├── httproute-frontend.yaml
+│   └── target-grp-frontend.yaml
+└── terraform
+    ├── eks-aws
+    │   ├── bastion.tf
+    │   ├── data.tf
+    │   ├── eks.tf
+    │   ├── outputs.tf
+    │   ├── terraform.tf
+    │   ├── variables.tf
+    │   └── vpc.tf
+    └── eks-kodekloud
+        ├── bastion.tf
+        ├── data.tf
+        ├── eks.tf
+        ├── iam-eks.tf
+        ├── outputs.tf
+        ├── terraform.tf
+        ├── variables.tf
+        └── vpc.tf
+
+14 directories, 42 files
+
+
+-------------------------------------------------------------------------------------------------------------------------
+
+
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo$ cd addons/argocd/
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/argocd$ ls
+README.md  patch-values.yaml  target-grp-config.yaml
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/argocd$ cat patch-values.yaml 
+# ArgoCD Helm Values Patch for EKS + Gateway API
+
+# 1. Run ArgoCD server in insecure (HTTP) mode
+# TLS terminates at the ALB (via ACM certificate). The ALB forwards plain
+# HTTP to ArgoCD internally.
+configs:
+  params:
+    server.insecure: true
+
+# 2. Enable Helm rendering inside Kustomize
+# ArgoCD Applications use kustomization.yaml files that reference helmCharts: blocks.
+# Remove this line if all ArgoCD Applications use pure Helm sources.
+  cm:
+    kustomize.buildOptions: "--enable-helm"
+
+# 3. Expose ArgoCD server via Gateway API HTTPRoute
+# The Helm chart natively supports creating an HTTPRoute resource. This
+# attaches to your existing Gateway and tells the ALB to route traffic
+# for argocd.ibtisam.qzz.io to the argocd-server Service.
+server:
+  httproute:
+    enabled: true
+    parentRefs:
+      - name: app-alb-gateway
+        namespace: default
+        sectionName: https
+    hostnames:
+      - argocd.ibtisam.qzz.io
+    rules:
+      - matches:
+          - path:
+              type: PathPrefix
+              value: /
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/argocd$ cat target-grp-config.yaml 
+# TargetGroupConfiguration for ArgoCD Server
+
+# The targetReference.name must match the ArgoCD server Service name.
+# Default Helm release name "argocd" produces service "argocd-server".
+apiVersion: gateway.k8s.aws/v1beta1
+kind: TargetGroupConfiguration
+metadata:
+  name: argocd-tg-config
+  namespace: argocd
+spec:
+  targetReference:
+    name: argocd-server         
+  defaultConfiguration:
+    targetType: ip
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/argocd$ # Install ArgoCD
+kubectl create namespace argocd
+
+helm repo add argo https://argoproj.github.io/argo-helm
+helm repo update argo
+
+helm install argocd argo/argo-cd \
+  --namespace argocd \
+  -f patch-values.yaml \
+  --version 9.5.21
+
+# After the Service exists, apply the TargetGroupConfiguration
+kubectl apply -f target-grp-config.yaml
+namespace/argocd created
+"argo" has been added to your repositories
+Hang tight while we grab the latest from your chart repositories...
+...Successfully got an update from the "argo" chart repository
+Update Complete. ⎈Happy Helming!⎈
+NAME: argocd
+LAST DEPLOYED: Thu Jun 18 15:15:04 2026
+NAMESPACE: argocd
+STATUS: deployed
+REVISION: 1
+DESCRIPTION: Install complete
+TEST SUITE: None
+NOTES:
+In order to access the server UI you have the following options:
+
+1. kubectl port-forward service/argocd-server -n argocd 8080:443
+
+    and then open the browser on http://localhost:8080 and accept the certificate
+
+2. enable ingress in the values file `server.ingress.enabled` and either
+      - Add the annotation for ssl passthrough: https://argo-cd.readthedocs.io/en/stable/operator-manual/ingress/#option-1-ssl-passthrough
+      - Set the `configs.params."server.insecure"` in the values file and terminate SSL at your ingress: https://argo-cd.readthedocs.io/en/stable/operator-manual/ingress/#option-2-multiple-ingress-objects-and-hosts
+
+
+After reaching the UI the first time you can login with username: admin and the random password generated during the installation. You can find the password by running:
+
+kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+
+(You should delete the initial secret afterwards as suggested by the Getting Started Guide: https://argo-cd.readthedocs.io/en/stable/getting_started/#4-login-using-the-cli)
+targetgroupconfiguration.gateway.k8s.aws/argocd-tg-config created
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/argocd$ kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+<REDACTED>ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/argocd$
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/argocd$ k get httproute -A
+NAMESPACE   NAME            HOSTNAMES                   AGE
+argocd      argocd-server   ["argocd.ibtisam.qzz.io"]   4m50s
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/argocd$
+
+
+-------------------------------------------------------------------------------------------------------------------------
+
+
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo$ ls
+addons  app  application.yaml  chart  kustomization.yaml  manifests  terraform
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo$ cat kustomization.yaml 
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - manifests/httproute-frontend.yaml
+  - manifests/target-grp-frontend.yaml
+helmCharts:
+  - name: onlineboutique
+    repo: oci://ghcr.io/ibtisam-iq
+    version: 0.10.5
+    releaseName: boutique-app
+    namespace: boutique-app
+    valuesFile: chart/values-eks.yaml
+    ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo$ cat manifests/httproute-frontend.yaml 
+# ---------------------------------------------------------------
+# HTTPRoute: Online Boutique Frontend
+#
+# Routes external traffic to the frontend Service created by the
+# onlineboutique Helm chart. The chart's frontend.externalService
+# is set to false in values-eks.yaml, so no LoadBalancer Service
+# exists. This HTTPRoute + the ALB Gateway is the sole ingress path.
+#
+# parentRefs bind to the shared ALB Gateway (app-alb-gateway) in
+# the default namespace. Both HTTP and HTTPS listeners are attached
+# so the ALB handles TLS termination via ACM.
+#
+# backendRef targets the "frontend" Service on port 80, which is
+# the ClusterIP Service the Helm chart creates when
+# frontend.externalService: false.
+#
+# group, kind, weight, and matches are Gateway API defaults that
+# the ALB controller injects after creation. Including them here
+# explicitly prevents ArgoCD from showing perpetual OutOfSync drift
+# between the desired state (Git) and the live state (cluster).
+# ---------------------------------------------------------------
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: HTTPRoute
+metadata:
+  name: http-app-route
+  namespace: boutique-app
+spec:
+  hostnames:
+    - "app.ibtisam.qzz.io"
+  parentRefs:
+  - group: gateway.networking.k8s.io
+    namespace: default
+    kind: Gateway
+    name: app-alb-gateway
+    sectionName: http
+  - group: gateway.networking.k8s.io
+    namespace: default
+    kind: Gateway
+    name: app-alb-gateway
+    sectionName: https
+  rules:
+  - backendRefs:
+    - group: ""
+      kind: Service
+      name: frontend
+      port: 80
+      weight: 1
+    matches:
+    - path:
+        type: PathPrefix
+        value: /
+        
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo$ cat manifests/target-grp-frontend.yaml 
+# ---------------------------------------------------------------
+# TargetGroupConfiguration: Frontend Pod IP Targeting
+#
+# Configures the AWS ALB to route directly to frontend pod IPs
+# (targetType: ip) instead of NodePort. This works because EKS
+# nodes and pods share the VPC CIDR, so the ALB can reach pod IPs
+# natively without an extra hop through kube-proxy.
+#
+# targetReference.name matches the "frontend" Service created by
+# the onlineboutique Helm chart. The ALB Load Balancer Controller
+# uses this binding to register frontend pod IPs as targets in the
+# ALB target group.
+# ---------------------------------------------------------------
+apiVersion: gateway.k8s.aws/v1beta1
+kind: TargetGroupConfiguration
+metadata:
+  name: app-tg-config
+  namespace: boutique-app
+spec:
+  targetReference:
+    name: frontend
+  defaultConfiguration:
+    targetType: ip
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo$ cat chart/values-eks.yaml 
+# ---------------------------------------------------------------
+# values-eks.yaml
+# EKS patch on top of the upstream values.yaml
+# Only fields that differ from upstream defaults are listed here.
+#
+# Chart:   oci://ghcr.io/ibtisam-iq/onlineboutique
+# Cluster: Amazon EKS
+# Ingress: Gateway API HTTPRoute + AWS ALB (defined in manifests/)
+# ---------------------------------------------------------------
+
+images:
+  repository: ghcr.io/ibtisam-iq/microservices-demo
+  # Set to "latest" for initial deployment. ArgoCD Image Updater
+  # tracks this tag's digest in GHCR and rolls pods automatically
+  # when CI pushes a new image. The tag value here is only used
+  # for the first deploy; Image Updater manages it from there.
+  tag: "latest"
+
+frontend:
+  # Suppress the default LoadBalancer Service. Traffic enters via
+  # HTTPRoute + ALB TargetGroupBinding in manifests/.
+  externalService: false
+  platform: aws
+
+# loadgenerator is excluded from the CI matrix (not a production
+# service, no image pushed to GHCR). Deploying it would cause
+# ImagePullBackOff. Disable it here.
+loadGenerator:
+  create: false
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo$ cat application.yaml 
+# ---------------------------------------------------------------
+# ArgoCD Application: Online Boutique (EKS)
+#
+# Source of truth: platform-engineering-systems CD repo
+# Path:           systems/microservices-demo/
+# Contents:       kustomization.yaml, values-eks.yaml, manifests/
+#
+# The Kustomization pulls the Helm chart from
+# oci://ghcr.io/ibtisam-iq/onlineboutique, overlays values-eks.yaml,
+# and includes HTTPRoute + TargetGroupBinding from manifests/.
+#
+# ---------------------------------------------------------------
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: microservices-demo
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/ibtisam-iq/platform-engineering-systems.git
+    targetRevision: main
+    path: systems/microservices-demo
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: boutique-app
+
+  syncPolicy:
+    automated:
+      selfHeal: true
+      prune: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=trueubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo$ 
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo$ k apply -f application.yaml 
+Warning: metadata.finalizers: "resources-finalizer.argocd.argoproj.io": prefer a domain-qualified finalizer name including a path (/) to avoid accidental conflicts with other finalizer writers
+application.argoproj.io/microservices-demo created
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo$ k get httproutes.gateway.networking.k8s.io -A
+NAMESPACE      NAME             HOSTNAMES                   AGE
+argocd         argocd-server    ["argocd.ibtisam.qzz.io"]   10m
+boutique-app   http-app-route   ["app.ibtisam.qzz.io"]      58s
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo$ k get applications.argoproj.io -A
+NAMESPACE   NAME                 SYNC STATUS   HEALTH STATUS
+argocd      microservices-demo   Synced        Healthy
+
+
+----------------------------------------------------------------------------------------------------------------------------------
+
+
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo$ cd addons/image-updater/
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/image-updater$ ls
+README.md  image-updater.yaml
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/image-updater$ cat image-updater.yaml 
+# ---------------------------------------------------------------
+# ImageUpdater: microservices-demo
+#
+# Watches the microservices-demo ArgoCD Application and tracks
+# all 10 service images on GHCR. Uses the digest strategy to
+# detect when CI pushes a new image behind the :latest tag.
+#
+# Update strategy: digest
+#   Compares the digest of the :latest tag in GHCR against what
+#   is currently running in the cluster. When CI pushes a new
+#   build, the digest behind :latest changes, Image Updater
+#   detects it and patches the ArgoCD Application with the new
+#   digest. No image creation timestamps involved.
+#
+#   newest-build was evaluated but does not work reliably with
+#   BuildKit-produced images because BuildKit sets the image
+#   config's "created" field to epoch (1970-01-01T00:00:00Z)
+#   for reproducible builds, making all tags appear identical
+#   in age.
+#
+# Update method: argocd (default)
+#   Image overrides are patched directly onto the Application CR
+#   as kustomize image entries. No Git write-back. The override
+#   persists in the Application object. If the Application is
+#   ever deleted and recreated from Git, Image Updater re-applies
+#   the overrides on its next poll cycle (~2 minutes).
+#
+# Tradeoff:
+#   Pods show frontend:latest@sha256:<digest> instead of
+#   frontend:sha-<commit>. Commit traceability requires looking
+#   up the digest in GHCR. The SHA tags still exist in GHCR for
+#   audit (CI pushes :sha-<40char>, :sha-<7char>, and :latest
+#   on every build).
+#
+# namePattern matches the ArgoCD Application metadata.name
+# exactly: "microservices-demo".
+#
+# :latest suffix on each imageName is the version constraint
+# required by the digest strategy. It tells Image Updater which
+# tag to track. Without it, the strategy fails with "cannot use
+# digest without a version constraint".
+# ---------------------------------------------------------------
+apiVersion: argocd-image-updater.argoproj.io/v1alpha1
+kind: ImageUpdater
+metadata:
+  name: microservices-demo-updater
+  namespace: argocd
+spec:
+  applicationRefs:
+    - namePattern: "microservices-demo"
+      commonUpdateSettings:
+        updateStrategy: digest
+      images:
+        - alias: frontend
+          imageName: "ghcr.io/ibtisam-iq/microservices-demo/frontend:latest"
+        - alias: cartservice
+          imageName: "ghcr.io/ibtisam-iq/microservices-demo/cartservice:latest"
+        - alias: checkoutservice
+          imageName: "ghcr.io/ibtisam-iq/microservices-demo/checkoutservice:latest"
+        - alias: currencyservice
+          imageName: "ghcr.io/ibtisam-iq/microservices-demo/currencyservice:latest"
+        - alias: emailservice
+          imageName: "ghcr.io/ibtisam-iq/microservices-demo/emailservice:latest"
+        - alias: paymentservice
+          imageName: "ghcr.io/ibtisam-iq/microservices-demo/paymentservice:latest"
+        - alias: productcatalogservice
+          imageName: "ghcr.io/ibtisam-iq/microservices-demo/productcatalogservice:latest"
+        - alias: recommendationservice
+          imageName: "ghcr.io/ibtisam-iq/microservices-demo/recommendationservice:latest"
+        - alias: shippingservice
+          imageName: "ghcr.io/ibtisam-iq/microservices-demo/shippingservice:latest"
+        - alias: adservice
+          imageName: "ghcr.io/ibtisam-iq/microservices-demo/adservice:latest"
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/image-updater$ kubectl apply -n argocd \
+  -f https://raw.githubusercontent.com/argoproj-labs/argocd-image-updater/stable/config/install.yaml
+
+sleep 15  
+
+kubectl logs -n argocd -l app.kubernetes.io/name=argocd-image-updater  
+
+kubectl apply -f image-updater.yaml
+
+sleep 20
+
+kubectl get imageupdater -n argocd
+
+kubectl logs -n argocd -l app.kubernetes.io/name=argocd-image-updater --tail=5
+customresourcedefinition.apiextensions.k8s.io/imageupdaters.argocd-image-updater.argoproj.io created
+serviceaccount/argocd-image-updater-controller created
+role.rbac.authorization.k8s.io/argocd-image-updater created
+role.rbac.authorization.k8s.io/argocd-image-updater-leader-election-role created
+role.rbac.authorization.k8s.io/argocd-image-updater-manager-role created
+clusterrole.rbac.authorization.k8s.io/argocd-image-updater-metrics-auth-role created
+clusterrole.rbac.authorization.k8s.io/argocd-image-updater-metrics-reader created
+rolebinding.rbac.authorization.k8s.io/argocd-image-updater created
+rolebinding.rbac.authorization.k8s.io/argocd-image-updater-leader-election-rolebinding created
+rolebinding.rbac.authorization.k8s.io/argocd-image-updater-manager-rolebinding created
+clusterrolebinding.rbac.authorization.k8s.io/argocd-image-updater-metrics-auth-rolebinding created
+clusterrolebinding.rbac.authorization.k8s.io/argocd-image-updater-metrics-reader-rolebinding created
+configmap/argocd-image-updater-config created
+configmap/argocd-image-updater-ssh-config created
+secret/argocd-image-updater-secret created
+service/argocd-image-updater-controller-metrics-service created
+deployment.apps/argocd-image-updater-controller created
+networkpolicy.networking.k8s.io/allow-metrics-traffic created
+time="2026-06-18T15:30:48Z" level=info msg="Disabling HTTP/2 support" controller=imageupdater controllerGroup=argocd-image-updater.argoproj.io controllerKind=ImageUpdater logger=controller-setup
+time="2026-06-18T15:30:48Z" level=info msg="starting server" addr="[::]:8081" name="health probe"
+I0618 15:30:48.185486       7 leaderelection.go:257] attempting to acquire leader lease argocd/c21b75f2.argoproj.io...
+I0618 15:30:48.291142       7 leaderelection.go:271] successfully acquired lease argocd/c21b75f2.argoproj.io
+time="2026-06-18T15:30:48Z" level=info msg="Starting EventSource" controller=imageupdater controllerGroup=argocd-image-updater.argoproj.io controllerKind=ImageUpdater source="kind source: *v1alpha1.ImageUpdater"
+time="2026-06-18T15:30:48Z" level=info msg="No ImageUpdater CRs to process" controller=imageupdater controllerGroup=argocd-image-updater.argoproj.io controllerKind=ImageUpdater logger=warmup-cache
+time="2026-06-18T15:30:48Z" level=info msg="Finished cache warm-up." controller=imageupdater controllerGroup=argocd-image-updater.argoproj.io controllerKind=ImageUpdater logger=warmup-cache
+time="2026-06-18T15:30:48Z" level=info msg="Starting Controller" controller=imageupdater controllerGroup=argocd-image-updater.argoproj.io controllerKind=ImageUpdater
+time="2026-06-18T15:30:48Z" level=info msg="Starting workers" controller=imageupdater controllerGroup=argocd-image-updater.argoproj.io controllerKind=ImageUpdater worker count=1
+time="2026-06-18T15:30:49Z" level=info msg="Serving metrics server" bindAddress=":8443" logger=controller-runtime.metrics secure=true
+imageupdater.argocd-image-updater.argoproj.io/microservices-demo-updater created
+NAME                         APPS   IMAGES   LAST CHECKED   READY
+microservices-demo-updater   1      10       18s            True
+time="2026-06-18T15:30:59Z" level=info msg="Successfully updated image 'ghcr.io/ibtisam-iq/microservices-demo/adservice:latest' to 'ghcr.io/ibtisam-iq/microservices-demo/adservice:latest@sha256:c79fa0cf2d032c121e06977a9b68b94f8c7f578a8df58fb6ba0be00d80eca678', but pending spec update (dry run=false)" application=argocd/microservices-demo controller=imageupdater controllerGroup=argocd-image-updater.argoproj.io controllerKind=ImageUpdater imageUpdater_name=microservices-demo-updater imageUpdater_namespace=argocd image_alias=adservice image_name=ghcr.io/ibtisam-iq/microservices-demo/adservice image_registry=ghcr.io image_tag=latest logger=reconcile
+time="2026-06-18T15:30:59Z" level=info msg="Committing 10 parameter update(s) for application microservices-demo" application=argocd/microservices-demo controller=imageupdater controllerGroup=argocd-image-updater.argoproj.io controllerKind=ImageUpdater imageUpdater_name=microservices-demo-updater imageUpdater_namespace=argocd logger=reconcile
+time="2026-06-18T15:30:59Z" level=info msg="Successfully updated application spec for microservices-demo" application=argocd/microservices-demo controller=imageupdater controllerGroup=argocd-image-updater.argoproj.io controllerKind=ImageUpdater imageUpdater_name=microservices-demo-updater imageUpdater_namespace=argocd logger=reconcile
+time="2026-06-18T15:30:59Z" level=info msg="Successfully updated the live application spec" application=argocd/microservices-demo controller=imageupdater controllerGroup=argocd-image-updater.argoproj.io controllerKind=ImageUpdater imageUpdater_name=microservices-demo-updater imageUpdater_namespace=argocd logger=reconcile
+time="2026-06-18T15:30:59Z" level=info msg="Processing results: applications=1 images_considered=10 images_skipped=0 images_updated=10 errors=0" controller=imageupdater controllerGroup=argocd-image-updater.argoproj.io controllerKind=ImageUpdater imageUpdater_name=microservices-demo-updater imageUpdater_namespace=argocd logger=reconcile

@@ -1,0 +1,128 @@
+# Phase 7: Observe Scaling Behavior and Validate Reliability
+# Horizontal Pod Autoscaler (HPA) - Frontend Service
+# Metrics Server
+
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo$ ls
+addons  app  application.yaml  chart  kustomization.yaml  manifests  terraform
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo$ ls manifests/
+hpa-frontend.yaml  httproute-frontend.yaml  target-grp-frontend.yaml
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo$ cd manifests/
+
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/manifests$ cat hpa-frontend.yaml 
+# Horizontal Pod Autoscaler (HPA) - Frontend Service
+# Scales the frontend deployment based on the CPU utilization
+# To observe scaling behaviour and validate the reliability
+
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: frontend-hpa
+  namespace: boutique-app
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: frontend
+  minReplicas: 1
+  maxReplicas: 5
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 5       # Intentionally set to 5% to trigger scaling
+
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/manifests$ k get deploy -n boutique-app frontend 
+NAME       READY   UP-TO-DATE   AVAILABLE   AGE
+frontend   1/1     1            1           66m
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/manifests$ k get deploy -n boutique-app frontend -o yaml | grep -i resources -A10
+        resources:
+          limits:
+            cpu: 200m
+            memory: 128Mi
+          requests:
+            cpu: 100m
+            memory: 64Mi
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/manifests$ k apply -f hpa-frontend.yaml 
+horizontalpodautoscaler.autoscaling/frontend-hpa created
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/manifests$ k get hpa -n boutique-app 
+NAME           REFERENCE             TARGETS             MINPODS   MAXPODS   REPLICAS   AGE
+frontend-hpa   Deployment/frontend   cpu: <unknown>/5%   1         5         1          19s
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/manifests$ k get hpa -n boutique-app 
+NAME           REFERENCE             TARGETS             MINPODS   MAXPODS   REPLICAS   AGE
+frontend-hpa   Deployment/frontend   cpu: <unknown>/5%   1         5         1          4m1s
+
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/manifests$ k describe hpa -n boutique-app frontend-hpa 
+Name:                                                  frontend-hpa
+Namespace:                                             boutique-app
+Labels:                                                <none>
+Annotations:                                           <none>
+CreationTimestamp:                                     Thu, 18 Jun 2026 16:33:51 +0000
+Reference:                                             Deployment/frontend
+Metrics:                                               ( current / target )
+  resource cpu on pods  (as a percentage of request):  <unknown> / 5%
+Min replicas:                                          1
+Max replicas:                                          5
+Deployment pods:                                       1 current / 0 desired
+Conditions:
+  Type           Status  Reason                   Message
+  ----           ------  ------                   -------
+  AbleToScale    True    SucceededGetScale        the HPA controller was able to get the target's current scale
+  ScalingActive  False   FailedGetResourceMetric  the HPA was unable to compute the replica count: failed to get cpu utilization: unable to get metrics for resource cpu: unable to fetch metrics from resource metrics API: the server could not find the requested resource (get pods.metrics.k8s.io)
+Events:
+  Type     Reason                        Age                    From                       Message
+  ----     ------                        ----                   ----                       -------
+  Warning  FailedComputeMetricsReplicas  101s (x12 over 4m26s)  horizontal-pod-autoscaler  invalid metrics (1 invalid out of 1), first error is: failed to get cpu resource metric value: failed to get cpu utilization: unable to get metrics for resource cpu: unable to fetch metrics from resource metrics API: the server could not find the requested resource (get pods.metrics.k8s.io)
+  Warning  FailedGetResourceMetric       86s (x13 over 4m26s)   horizontal-pod-autoscaler  failed to get cpu utilization: unable to get metrics for resource cpu: unable to fetch metrics from resource metrics API: the server could not find the requested resource (get pods.metrics.k8s.io)
+
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/manifests$ # --- EKS: Helm (no --kubelet-insecure-tls) ---
+helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/
+helm repo update metrics-server
+helm install metrics-server metrics-server/metrics-server --namespace kube-system
+"metrics-server" has been added to your repositories
+Hang tight while we grab the latest from your chart repositories...
+...Successfully got an update from the "metrics-server" chart repository
+Update Complete. ⎈Happy Helming!⎈
+NAME: metrics-server
+LAST DEPLOYED: Thu Jun 18 16:39:16 2026
+NAMESPACE: kube-system
+STATUS: deployed
+REVISION: 1
+DESCRIPTION: Install complete
+TEST SUITE: None
+NOTES:
+***********************************************************************
+* Metrics Server                                                      *
+***********************************************************************
+  Chart version: 3.13.1
+  App version:   0.8.1
+  Image tag:     registry.k8s.io/metrics-server/metrics-server:v0.8.1
+***********************************************************************
+
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/manifests$ k top no
+error: Metrics API not available
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/manifests$ k top no
+NAME                         CPU(cores)   CPU(%)   MEMORY(bytes)   MEMORY(%)   
+ip-10-0-1-106.ec2.internal   71m          3%       1543Mi          46%         
+ip-10-0-2-41.ec2.internal    63m          3%       1676Mi          50%         
+ip-10-0-2-91.ec2.internal    133m         6%       3013Mi          91%         
+ip-10-0-3-20.ec2.internal    112m         5%       1795Mi          54%         
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/manifests$ k get hpa -n boutique-app 
+NAME           REFERENCE             TARGETS      MINPODS   MAXPODS   REPLICAS   AGE
+frontend-hpa   Deployment/frontend   cpu: 2%/5%   1         5         1          6m30s
+
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/image-updater$ k get hpa -A
+NAMESPACE      NAME           REFERENCE             TARGETS      MINPODS   MAXPODS   REPLICAS   AGE
+boutique-app   frontend-hpa   Deployment/frontend   cpu: 9%/5%   1         5         1          7m24s
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/image-updater$ k get hpa -A
+NAMESPACE      NAME           REFERENCE             TARGETS      MINPODS   MAXPODS   REPLICAS   AGE
+boutique-app   frontend-hpa   Deployment/frontend   cpu: 1%/5%   1         5         2          7m59s
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/image-updater$ k get hpa -A
+NAMESPACE      NAME           REFERENCE             TARGETS      MINPODS   MAXPODS   REPLICAS   AGE
+boutique-app   frontend-hpa   Deployment/frontend   cpu: 2%/5%   1         5         1          14m

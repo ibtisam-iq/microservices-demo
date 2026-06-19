@@ -1,0 +1,553 @@
+# Phase 6 — Elastic Stack Logging
+# ECK Operator
+# ECK Elasticsearch
+# ECK Kibana
+# Filebeat DaemonSet
+
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons$ cd elastic-logging/
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/elastic-logging$ ls
+httproute-kibana.yaml            patch-values-filebeat.yaml  storage-class-gp3.yaml
+patch-values-elasticsearch.yaml  patch-values-kibana.yaml    target-grp-kibana.yaml
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/elastic-logging$ k get no
+NAME                         STATUS   ROLES    AGE   VERSION
+ip-10-0-1-106.ec2.internal   Ready    <none>   74m   v1.36.1-eks-0de9cde
+ip-10-0-2-91.ec2.internal    Ready    <none>   74m   v1.36.1-eks-0de9cde
+ip-10-0-3-20.ec2.internal    Ready    <none>   74m   v1.36.1-eks-0de9cde
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/elastic-logging$ k get sc
+NAME            PROVISIONER             RECLAIMPOLICY   VOLUMEBINDINGMODE      ALLOWVOLUMEEXPANSION   AGE
+gp2             kubernetes.io/aws-ebs   Delete          WaitForFirstConsumer   false                  101m
+gp3 (default)   ebs.csi.aws.com         Delete          WaitForFirstConsumer   true                   62m
+
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/elastic-logging$ cat patch-values-filebeat.yaml
+# Helm values patch for eck-beats chart (Filebeat)
+# Release name: eck-beats
+# Chart: elastic/eck-beats
+# Namespace: logging
+#
+# Apply with:
+#   helm upgrade -i eck-beats elastic/eck-beats \
+#     --version 0.18.0 -f patch-values-filebeat.yaml -n logging
+
+# Top-level configuration: Beats type
+type: filebeat
+
+# Reference to the Elasticsearch cluster managed by ECK.
+elasticsearchRef:
+  name: eck-elasticsearch  # CR name from eck-elasticsearch chart
+  namespace: logging
+
+# DaemonSet-level configuration: run Filebeat on every node and mount container log paths.
+daemonSet:
+  podTemplate:
+    spec:
+      serviceAccount: elastic-beat-filebeat
+      automountServiceAccountToken: true
+      terminationGracePeriodSeconds: 30
+      dnsPolicy: ClusterFirstWithHostNet
+      hostNetwork: true
+      containers:
+        - name: filebeat
+          securityContext:
+            runAsUser: 0
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          volumeMounts:
+            - mountPath: /var/log/containers
+              name: varlogcontainers
+            - mountPath: /var/log/pods
+              name: varlogpods
+      volumes:
+        - name: varlogcontainers
+          hostPath:
+            path: /var/log/containers
+            type: Directory
+        - name: varlogpods
+          hostPath:
+            path: /var/log/pods
+            type: Directory
+
+# Filebeat configuration: Kubernetes autodiscover and log parsing.
+config:
+  filebeat:
+    autodiscover:
+      providers:
+        - node: ${NODE_NAME}
+          type: kubernetes
+          hints:
+            enabled: true
+            default_config:
+              type: filestream
+              id: kubernetes-container-logs-${data.kubernetes.pod.name}-${data.kubernetes.container.id}
+              paths:
+                - /var/log/containers/*${data.kubernetes.container.id}.log
+              parsers:
+                - container: {}
+              prospector:
+                scanner:
+                  fingerprint.enabled: true
+                  symlinks: true
+              file_identity.fingerprint: {}
+  processors:
+    - add_cloud_metadata: {}
+    - add_host_metadata: {}
+
+# RBAC: service account, ClusterRole and ClusterRoleBinding for autodiscover.
+serviceAccount:
+  name: elastic-beat-filebeat
+  namespace: logging
+
+clusterRoleBinding:
+  name: elastic-beat-autodiscover-binding
+  subjects:
+    - kind: ServiceAccount
+      name: elastic-beat-filebeat
+      namespace: logging
+  roleRef:
+    kind: ClusterRole
+    name: elastic-beat-autodiscover
+    apiGroup: rbac.authorization.k8s.io
+
+clusterRole:
+  name: elastic-beat-autodiscover
+  rules:
+    - apiGroups: [""]
+      resources:
+        - events
+        - pods
+        - namespaces
+        - nodes
+      verbs:
+        - get
+        - watch
+        - list
+    - apiGroups: ["apps"]
+      resources:
+        - replicasets
+      verbs:
+        - get
+        - list
+        - watch
+    - apiGroups: ["batch"]
+      resources:
+        - jobs
+      verbs:
+        - get
+        - list
+        - watch
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/elastic-logging$ cat patch-values-kibana.yaml 
+# Helm values patch for eck-kibana chart
+# Release name: eck-kibana
+# Chart: elastic/eck-kibana
+# Namespace: logging
+#
+# Apply with:
+#   helm install eck-kibana elastic/eck-kibana \
+#     --version 0.18.0 -f patch-values-kibana.yaml -n logging
+
+# Reference to the Elasticsearch cluster managed by ECK.
+elasticsearchRef:
+  name: eck-elasticsearch  # CR name from eck-elasticsearch chart
+  namespace: logging
+
+
+------------------------------------------------------------------------------------------------------------------------------
+
+
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/elastic-logging$ # Create logging namespace
+kubectl get namespace logging >/dev/null 2>&1 || kubectl create namespace logging
+
+# Add elastic helm repository
+helm repo add elastic https://helm.elastic.co
+helm repo update
+
+# Install ECK operator
+helm upgrade -i eck-operator elastic/eck-operator \
+  --version 3.4.0 \
+  -n logging
+
+helm upgrade -i eck-elasticsearch elastic/eck-elasticsearch \
+  --version 0.19.0 \
+  -n logging
+
+# Deploy eck-beats
+helm upgrade -i eck-beats elastic/eck-beats \
+  --version 0.19.0 \
+  -f patch-values-filebeat.yaml \
+  -n logging
+
+# Install eck-kibana
+helm upgrade -i eck-kibana elastic/eck-kibana \
+  --version 0.19.0 \
+  -f patch-values-kibana.yaml \
+  -n logging
+
+sleep 60
+
+# Verify ECK components
+kubectl get pods,svc,deploy,sts,ds,sa,elastic -n logging
+namespace/logging created
+"elastic" has been added to your repositories
+Hang tight while we grab the latest from your chart repositories...
+...Successfully got an update from the "external-dns" chart repository
+...Successfully got an update from the "eks" chart repository
+...Successfully got an update from the "elastic" chart repository
+...Successfully got an update from the "argo" chart repository
+...Successfully got an update from the "prometheus-community" chart repository
+Update Complete. ⎈Happy Helming!⎈
+Release "eck-operator" does not exist. Installing it now.
+NAME: eck-operator
+LAST DEPLOYED: Thu Jun 18 16:08:40 2026
+NAMESPACE: logging
+STATUS: deployed
+REVISION: 1
+DESCRIPTION: Install complete
+TEST SUITE: None
+NOTES:
+1. Inspect the operator logs by running the following command:
+   kubectl logs -n logging sts/eck-operator
+Release "eck-elasticsearch" does not exist. Installing it now.
+NAME: eck-elasticsearch
+LAST DEPLOYED: Thu Jun 18 16:08:44 2026
+NAMESPACE: logging
+STATUS: deployed
+REVISION: 1
+DESCRIPTION: Install complete
+TEST SUITE: None
+NOTES:
+1. Check Elasticsearch resource status
+  $ kubectl get es eck-elasticsearch -n logging
+
+2. Check Elasticsearch pod status
+  $ kubectl get pods --namespace=logging -l elasticsearch.k8s.elastic.co/cluster-name=eck-elasticsearch
+Release "eck-beats" does not exist. Installing it now.
+NAME: eck-beats
+LAST DEPLOYED: Thu Jun 18 16:08:45 2026
+NAMESPACE: logging
+STATUS: deployed
+REVISION: 1
+DESCRIPTION: Install complete
+TEST SUITE: None
+NOTES:
+1. Check Beat status
+  $ kubectl get beat eck-beats -n logging
+
+2. Check Beat pod status
+  $ kubectl get pods --namespace=logging -l beat.k8s.elastic.co/name=eck-beats
+Release "eck-kibana" does not exist. Installing it now.
+NAME: eck-kibana
+LAST DEPLOYED: Thu Jun 18 16:08:47 2026
+NAMESPACE: logging
+STATUS: deployed
+REVISION: 1
+DESCRIPTION: Install complete
+TEST SUITE: None
+NOTES:
+1. Check Kibana status
+  $ kubectl get kibana eck-kibana -n logging
+
+2. Check Kibana pod status
+  $ kubectl get pods --namespace=logging -l kibana.k8s.elastic.co/name=eck-kibana
+
+NAME                                 READY   STATUS    RESTARTS   AGE
+pod/eck-beats-beat-filebeat-4tndr    1/1     Running   0          56s
+pod/eck-beats-beat-filebeat-q25cj    1/1     Running   0          56s
+pod/eck-beats-beat-filebeat-qjqp6    1/1     Running   0          56s
+pod/eck-elasticsearch-es-default-0   0/1     Running   0          57s
+pod/eck-kibana-kb-65699f8b-sq8bq     0/1     Pending   0          55s
+pod/elastic-operator-0               1/1     Running   0          66s
+
+NAME                                         TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)    AGE
+service/eck-elasticsearch-es-default         ClusterIP   None             <none>        9200/TCP   57s
+service/eck-elasticsearch-es-http            ClusterIP   172.20.69.244    <none>        9200/TCP   58s
+service/eck-elasticsearch-es-internal-http   ClusterIP   172.20.88.174    <none>        9200/TCP   58s
+service/eck-elasticsearch-es-transport       ClusterIP   None             <none>        9300/TCP   59s
+service/eck-kibana-kb-http                   ClusterIP   172.20.186.205   <none>        5601/TCP   56s
+service/elastic-operator-webhook             ClusterIP   172.20.95.238    <none>        443/TCP    67s
+
+NAME                            READY   UP-TO-DATE   AVAILABLE   AGE
+deployment.apps/eck-kibana-kb   0/1     1            0           56s
+
+NAME                                            READY   AGE
+statefulset.apps/eck-elasticsearch-es-default   0/1     57s
+statefulset.apps/elastic-operator               1/1     67s
+
+NAME                                     DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR   AGE
+daemonset.apps/eck-beats-beat-filebeat   3         3         3       3            3           <none>          56s
+
+NAME                                   AGE
+serviceaccount/default                 71s
+serviceaccount/elastic-beat-filebeat   64s
+serviceaccount/elastic-operator        68s
+
+NAME                                 HEALTH   AVAILABLE   EXPECTED   TYPE       VERSION   AGE
+beat.beat.k8s.elastic.co/eck-beats   green    3           3          filebeat   9.4.0     63s
+
+NAME                                                           HEALTH    NODES   VERSION   PHASE             AGE
+elasticsearch.elasticsearch.k8s.elastic.co/eck-elasticsearch   unknown           9.4.0     ApplyingChanges   65s
+
+NAME                                      HEALTH   NODES   VERSION   AGE
+kibana.kibana.k8s.elastic.co/eck-kibana   red              9.4.0     62s
+
+
+-----------------------------------------------------------------------------------------------------------------------------------
+
+
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/elastic-logging$ k get po -n logging 
+NAME                             READY   STATUS    RESTARTS   AGE
+eck-beats-beat-filebeat-4tndr    1/1     Running   0          3m19s
+eck-beats-beat-filebeat-q25cj    1/1     Running   0          3m19s
+eck-beats-beat-filebeat-qjqp6    1/1     Running   0          3m19s
+eck-elasticsearch-es-default-0   1/1     Running   0          3m20s
+eck-kibana-kb-65699f8b-sq8bq     0/1     Pending   0          3m18s
+elastic-operator-0               1/1     Running   0          3m29s
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/elastic-logging$ k get no
+NAME                         STATUS   ROLES    AGE   VERSION
+ip-10-0-1-106.ec2.internal   Ready    <none>   81m   v1.36.1-eks-0de9cde
+ip-10-0-2-91.ec2.internal    Ready    <none>   81m   v1.36.1-eks-0de9cde
+ip-10-0-3-20.ec2.internal    Ready    <none>   81m   v1.36.1-eks-0de9cde
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/elastic-logging$ k describe po -n logging eck-kibana-kb-65699f8b-sq8bq 
+Name:             eck-kibana-kb-65699f8b-sq8bq
+Namespace:        logging
+Priority:         0
+Service Account:  default
+Node:             <none>
+Labels:           common.k8s.elastic.co/type=kibana
+                  kibana.k8s.elastic.co/name=eck-kibana
+                  kibana.k8s.elastic.co/version=9.4.0
+                  pod-template-hash=65699f8b
+Annotations:      co.elastic.logs/module: kibana
+                  kibana.k8s.elastic.co/config-hash: 2337131381
+Status:           Pending
+SeccompProfile:   RuntimeDefault
+IP:               
+IPs:              <none>
+Controlled By:    ReplicaSet/eck-kibana-kb-65699f8b
+Init Containers:
+  elastic-internal-init:
+    Image:      docker.elastic.co/kibana/kibana:9.4.0
+    Port:       <none>
+    Host Port:  <none>
+    Command:
+      /usr/bin/env
+      bash
+      -c
+      /mnt/elastic-internal/scripts/init.sh
+    Limits:
+      cpu:     100m
+      memory:  50Mi
+    Requests:
+      cpu:     100m
+      memory:  50Mi
+    Environment:
+      POD_IP:      (v1:status.podIP)
+      POD_NAME:   eck-kibana-kb-65699f8b-sq8bq (v1:metadata.name)
+      NODE_NAME:   (v1:spec.nodeName)
+      NAMESPACE:  logging (v1:metadata.namespace)
+    Mounts:
+      /mnt/elastic-internal/http-certs from elastic-internal-http-certificates (ro)
+      /mnt/elastic-internal/kibana-config from elastic-internal-kibana-config (ro)
+      /mnt/elastic-internal/kibana-config-local from elastic-internal-kibana-config-local (rw)
+      /mnt/elastic-internal/kibana-plugins-local from kibana-plugins (rw)
+      /mnt/elastic-internal/scripts from kibana-scripts (ro)
+      /tmp from temp-volume (rw)
+      /usr/share/kibana/config/elasticsearch-certs from elasticsearch-certs (ro)
+      /usr/share/kibana/data from kibana-data (rw)
+      /usr/share/kibana/logs from kibana-logs (rw)
+Containers:
+  kibana:
+    Image:      docker.elastic.co/kibana/kibana:9.4.0
+    Port:       5601/TCP (https)
+    Host Port:  0/TCP (https)
+    Limits:
+      memory:  2Gi
+    Requests:
+      memory:     2Gi
+    Readiness:    http-get https://:5601/login delay=10s timeout=5s period=10s #success=1 #failure=3
+    Environment:  <none>
+    Mounts:
+      /mnt/elastic-internal/http-certs from elastic-internal-http-certificates (ro)
+      /mnt/elastic-internal/kibana-config from elastic-internal-kibana-config (ro)
+      /mnt/elastic-internal/scripts from kibana-scripts (ro)
+      /tmp from temp-volume (rw)
+      /usr/share/kibana/config from elastic-internal-kibana-config-local (rw)
+      /usr/share/kibana/config/elasticsearch-certs from elasticsearch-certs (ro)
+      /usr/share/kibana/data from kibana-data (rw)
+      /usr/share/kibana/logs from kibana-logs (rw)
+      /usr/share/kibana/plugins from kibana-plugins (rw)
+Conditions:
+  Type           Status
+  PodScheduled   False 
+Volumes:
+  elastic-internal-http-certificates:
+    Type:        Secret (a volume populated by a Secret)
+    SecretName:  eck-kibana-kb-http-certs-internal
+    Optional:    false
+  elastic-internal-kibana-config:
+    Type:        Secret (a volume populated by a Secret)
+    SecretName:  eck-kibana-kb-config
+    Optional:    false
+  elastic-internal-kibana-config-local:
+    Type:       EmptyDir (a temporary directory that shares a pod's lifetime)
+    Medium:     
+    SizeLimit:  <unset>
+  elasticsearch-certs:
+    Type:        Secret (a volume populated by a Secret)
+    SecretName:  eck-kibana-kb-es-ca
+    Optional:    false
+  kibana-data:
+    Type:       EmptyDir (a temporary directory that shares a pod's lifetime)
+    Medium:     
+    SizeLimit:  <unset>
+  kibana-logs:
+    Type:       EmptyDir (a temporary directory that shares a pod's lifetime)
+    Medium:     
+    SizeLimit:  <unset>
+  kibana-plugins:
+    Type:       EmptyDir (a temporary directory that shares a pod's lifetime)
+    Medium:     
+    SizeLimit:  <unset>
+  kibana-scripts:
+    Type:      ConfigMap (a volume populated by a ConfigMap)
+    Name:      eck-kibana-kb-scripts
+    Optional:  false
+  temp-volume:
+    Type:        EmptyDir (a temporary directory that shares a pod's lifetime)
+    Medium:      
+    SizeLimit:   <unset>
+QoS Class:       Burstable
+Node-Selectors:  <none>
+Tolerations:     node.kubernetes.io/not-ready:NoExecute op=Exists for 300s
+                 node.kubernetes.io/unreachable:NoExecute op=Exists for 300s
+Events:
+  Type     Reason            Age    From               Message
+  ----     ------            ----   ----               -------
+  Warning  FailedScheduling  4m15s  default-scheduler  0/3 nodes are available: 2 Insufficient memory, 2 Too many pods. no new claims to deallocate, preemption: 0/3 nodes are available: 3 No preemption victims found for incoming pod.
+
+
+----------------------------------------------------------------------------------------------------------------------------------
+
+
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/elastic-logging$ k get no
+NAME                         STATUS   ROLES    AGE   VERSION
+ip-10-0-1-106.ec2.internal   Ready    <none>   84m   v1.36.1-eks-0de9cde
+ip-10-0-2-41.ec2.internal    Ready    <none>   32s   v1.36.1-eks-0de9cde
+ip-10-0-2-91.ec2.internal    Ready    <none>   84m   v1.36.1-eks-0de9cde
+ip-10-0-3-20.ec2.internal    Ready    <none>   84m   v1.36.1-eks-0de9cde
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/elastic-logging$ k get po -n logging 
+NAME                             READY   STATUS     RESTARTS   AGE
+eck-beats-beat-filebeat-4tndr    1/1     Running    0          7m3s
+eck-beats-beat-filebeat-q25cj    1/1     Running    0          7m3s
+eck-beats-beat-filebeat-qjqp6    1/1     Running    0          7m3s
+eck-beats-beat-filebeat-wkl76    1/1     Running    0          30s
+eck-elasticsearch-es-default-0   1/1     Running    0          7m4s
+eck-kibana-kb-65699f8b-sq8bq     0/1     Init:0/1   0          7m2s
+elastic-operator-0               1/1     Running    0          7m13s
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/elastic-logging$ k get po -n logging 
+NAME                             READY   STATUS    RESTARTS   AGE
+eck-beats-beat-filebeat-4tndr    1/1     Running   0          7m52s
+eck-beats-beat-filebeat-q25cj    1/1     Running   0          7m52s
+eck-beats-beat-filebeat-qjqp6    1/1     Running   0          7m52s
+eck-beats-beat-filebeat-wkl76    1/1     Running   0          79s
+eck-elasticsearch-es-default-0   1/1     Running   0          7m53s
+eck-kibana-kb-65699f8b-sq8bq     0/1     Running   0          7m51s
+elastic-operator-0               1/1     Running   0          8m2s
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/elastic-logging$ k get elastic -A
+NAMESPACE   NAME                                 HEALTH   AVAILABLE   EXPECTED   TYPE       VERSION   AGE
+logging     beat.beat.k8s.elastic.co/eck-beats   green    4           4          filebeat   9.4.0     8m24s
+
+NAMESPACE   NAME                                                           HEALTH   NODES   VERSION   PHASE   AGE
+logging     elasticsearch.elasticsearch.k8s.elastic.co/eck-elasticsearch   yellow   1       9.4.0     Ready   8m26s
+
+NAMESPACE   NAME                                      HEALTH   NODES   VERSION   AGE
+logging     kibana.kibana.k8s.elastic.co/eck-kibana   green    1       9.4.0     8m23s
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/elastic-logging$ kubectl get secret eck-elasticsearch-es-elastic-user \
+  -n logging \
+  -o go-template='{{.data.elastic | base64decode}}'; echo
+<REDACTED>
+
+
+----------------------------------------------------------------------------------------------------------------------------------
+
+
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/elastic-logging$ k get httproutes.gateway.networking.k8s.io -A
+NAMESPACE      NAME               HOSTNAMES                       AGE
+argocd         argocd-server      ["argocd.ibtisam.qzz.io"]       62m
+boutique-app   http-app-route     ["app.ibtisam.qzz.io"]          52m
+monitoring     grafana-route      ["grafana.ibtisam.qzz.io"]      19m
+monitoring     prometheus-route   ["prometheus.ibtisam.qzz.io"]   19m
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/elastic-logging$ ls
+httproute-kibana.yaml            patch-values-filebeat.yaml  storage-class-gp3.yaml
+patch-values-elasticsearch.yaml  patch-values-kibana.yaml    target-grp-kibana.yaml
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/elastic-logging$ k get svc -n logging 
+NAME                                 TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)    AGE
+eck-elasticsearch-es-default         ClusterIP   None             <none>        9200/TCP   9m58s
+eck-elasticsearch-es-http            ClusterIP   172.20.69.244    <none>        9200/TCP   9m59s
+eck-elasticsearch-es-internal-http   ClusterIP   172.20.88.174    <none>        9200/TCP   9m59s
+eck-elasticsearch-es-transport       ClusterIP   None             <none>        9300/TCP   10m
+eck-kibana-kb-http                   ClusterIP   172.20.186.205   <none>        5601/TCP   9m57s
+elastic-operator-webhook             ClusterIP   172.20.95.238    <none>        443/TCP    10m
+
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/elastic-logging$ cat httproute-kibana.yaml 
+# HTTPRoute — exposes Kibana through the shared ALB Gateway
+# Hostname: kibana.ibtisam.qzz.io
+# Backend:  eck-kibana-kb-http Service (port 5601)
+#           This is a fixed Service name created by the eck-kibana chart.
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: HTTPRoute
+metadata:
+  name: kibana-route
+  namespace: logging
+spec:
+  hostnames:
+    - "kibana.ibtisam.qzz.io"
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      namespace: default
+      kind: Gateway
+      name: app-alb-gateway
+      sectionName: http
+    - group: gateway.networking.k8s.io
+      namespace: default
+      kind: Gateway
+      name: app-alb-gateway
+      sectionName: https
+  rules:
+    - backendRefs:
+        - name: eck-kibana-kb-http
+          port: 5601
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/elastic-logging$ cat target-grp-kibana.yaml 
+# TargetGroupConfiguration — registers Kibana pods as ALB targets
+# targetReference matches the Service name created by the eck-kibana chart.
+# protocol: HTTPS and healthCheckProtocol: HTTPS are required because Kibana
+# serves only HTTPS internally; the ALB health check also uses HTTPS.
+apiVersion: gateway.k8s.aws/v1beta1
+kind: TargetGroupConfiguration
+metadata:
+  name: kibana-tg-config
+  namespace: logging
+spec:
+  targetReference:
+    name: eck-kibana-kb-http
+  defaultConfiguration:
+    targetType: ip
+    protocol: HTTPS
+    healthCheckConfig:
+      healthCheckProtocol: HTTPS
+      healthCheckPath: /api/status
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/elastic-logging$ k apply -f httproute-kibana.yaml 
+httproute.gateway.networking.k8s.io/kibana-route created
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/elastic-logging$ k apply -f target-grp-kibana.yaml 
+targetgroupconfiguration.gateway.k8s.aws/kibana-tg-config created
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/elastic-logging$ k get httproutes.gateway.networking.k8s.io -A
+NAMESPACE      NAME               HOSTNAMES                       AGE
+argocd         argocd-server      ["argocd.ibtisam.qzz.io"]       64m
+boutique-app   http-app-route     ["app.ibtisam.qzz.io"]          54m
+logging        kibana-route       ["kibana.ibtisam.qzz.io"]       19s
+monitoring     grafana-route      ["grafana.ibtisam.qzz.io"]      21m
+monitoring     prometheus-route   ["prometheus.ibtisam.qzz.io"]   21m
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/elastic-logging$ kubectl get secret eck-elasticsearch-es-elastic-user   -n logging   -o go-template='{{.data.elastic | base64decode}}'; echo
+<REDACTED>
+ubuntu@ip-10-0-101-70:~/platform-engineering-systems/systems/microservices-demo/addons/elastic-logging$ 

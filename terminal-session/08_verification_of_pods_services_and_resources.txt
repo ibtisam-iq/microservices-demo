@@ -1,0 +1,960 @@
+# Phase 8: Verification of Pods, Services, and Resources
+
+# ---------------------- List all nodes in the cluster ----------------------
+ubuntu@ip-10-0-101-70:~$ k get no
+NAME                         STATUS   ROLES    AGE    VERSION
+ip-10-0-1-106.ec2.internal   Ready    <none>   119m   v1.36.1-eks-0de9cde
+ip-10-0-2-41.ec2.internal    Ready    <none>   35m    v1.36.1-eks-0de9cde
+ip-10-0-2-91.ec2.internal    Ready    <none>   119m   v1.36.1-eks-0de9cde
+ip-10-0-3-20.ec2.internal    Ready    <none>   119m   v1.36.1-eks-0de9cde
+
+ubuntu@ip-10-0-101-70:~$ k top no
+NAME                         CPU(cores)   CPU(%)   MEMORY(bytes)   MEMORY(%)   
+ip-10-0-1-106.ec2.internal   75m          3%       1549Mi          47%         
+ip-10-0-2-41.ec2.internal    61m          3%       1678Mi          50%         
+ip-10-0-2-91.ec2.internal    156m         8%       3017Mi          91%         
+ip-10-0-3-20.ec2.internal    105m         5%       1821Mi          55%
+
+# ---------------------- List all namespaces in the cluster ----------------------
+ubuntu@ip-10-0-101-70:~$ k get ns
+NAME              STATUS   AGE
+argocd            Active   102m
+boutique-app      Active   92m
+default           Active   153m
+external-dns      Active   108m
+kube-node-lease   Active   153m
+kube-public       Active   153m
+kube-system       Active   153m
+logging           Active   48m
+monitoring        Active   66m
+
+# ---------------------- List all Gateway API resources in the cluster ----------------------
+ubuntu@ip-10-0-101-70:~$ k get gatewayclass
+NAME                    CONTROLLER            ACCEPTED   AGE
+aws-alb-gateway-class   gateway.k8s.aws/alb   True       107m
+
+ubuntu@ip-10-0-101-70:~$ k get gateway -A
+NAMESPACE   NAME              CLASS                   ADDRESS                                                                  PROGRAMMED   AGE
+default     app-alb-gateway   aws-alb-gateway-class   k8s-default-appalbga-e77804456c-1256737212.us-east-1.elb.amazonaws.com   True         107m
+
+ubuntu@ip-10-0-101-70:~$ k get httproutes.gateway.networking.k8s.io -A
+NAMESPACE      NAME               HOSTNAMES                       AGE
+argocd         argocd-server      ["argocd.ibtisam.qzz.io"]       98m
+boutique-app   http-app-route     ["app.ibtisam.qzz.io"]          88m
+logging        kibana-route       ["kibana.ibtisam.qzz.io"]       34m
+monitoring     grafana-route      ["grafana.ibtisam.qzz.io"]      55m
+monitoring     prometheus-route   ["prometheus.ibtisam.qzz.io"]   55m
+
+# ---------------------- List ingress resources ----------------------
+ubuntu@ip-10-0-101-70:~$ k get ingress -A
+No resources found
+
+# ---------------------- List all pods in the cluster by namespace ----------------------
+ubuntu@ip-10-0-101-70:~$ k get po -A
+NAMESPACE      NAME                                                        READY   STATUS    RESTARTS       AGE
+argocd         argocd-application-controller-0                             1/1     Running   0              96m
+argocd         argocd-applicationset-controller-d65c7ddf6-m2bxv            1/1     Running   0              96m
+argocd         argocd-dex-server-55d9fc7cfb-v8cvr                          1/1     Running   0              96m
+argocd         argocd-image-updater-controller-75cb65fbf8-zwpt6            1/1     Running   0              80m
+argocd         argocd-notifications-controller-c546b76b-lnvzf              1/1     Running   0              96m
+argocd         argocd-redis-8c566bc9d-h7b55                                1/1     Running   0              96m
+argocd         argocd-repo-server-6885dd4757-l9rfn                         1/1     Running   0              96m
+argocd         argocd-server-6c544fcc65-cmhsf                              1/1     Running   0              96m
+boutique-app   adservice-754f76bf8c-56dd5                                  1/1     Running   0              80m
+boutique-app   cartservice-755df947b5-p4dq5                                1/1     Running   0              80m
+boutique-app   checkoutservice-576f94c74f-w5xms                            1/1     Running   0              80m
+boutique-app   currencyservice-7fc9dbd45-bsfp7                             1/1     Running   0              80m
+boutique-app   emailservice-77c8bf996c-glzv5                               1/1     Running   0              80m
+boutique-app   frontend-8cc9dfbff-hrnm2                                    1/1     Running   0              76m
+boutique-app   paymentservice-7b795464b7-ht2xm                             1/1     Running   0              80m
+boutique-app   productcatalogservice-6fcb6cf5dd-stwqh                      1/1     Running   0              80m
+boutique-app   recommendationservice-7646c59f95-dswgm                      1/1     Running   0              80m
+boutique-app   redis-cart-76f8565c48-l6qdn                                 1/1     Running   0              86m
+boutique-app   shippingservice-69f8656f94-s4k6x                            1/1     Running   0              80m
+external-dns   external-dns-7c866fb5c4-qbb8q                               1/1     Running   0              101m
+kube-system    aws-load-balancer-controller-675fbb6697-hbbjx               1/1     Running   2 (108m ago)   115m
+kube-system    aws-load-balancer-controller-675fbb6697-lqwpz               1/1     Running   2 (106m ago)   115m
+kube-system    aws-node-j6588                                              2/2     Running   0              36m
+kube-system    aws-node-kgfdt                                              2/2     Running   0              120m
+kube-system    aws-node-m9cnc                                              2/2     Running   0              120m
+kube-system    aws-node-whcwz                                              2/2     Running   0              120m
+kube-system    coredns-6978bdb969-nnzbr                                    1/1     Running   0              145m
+kube-system    coredns-6978bdb969-r9lct                                    1/1     Running   0              145m
+kube-system    ebs-csi-controller-7db7bf7948-2hr2b                         6/6     Running   0              110m
+kube-system    ebs-csi-controller-7db7bf7948-xr5br                         6/6     Running   0              110m
+kube-system    ebs-csi-node-6bwlg                                          3/3     Running   0              110m
+kube-system    ebs-csi-node-l9wbw                                          3/3     Running   0              110m
+kube-system    ebs-csi-node-llftj                                          3/3     Running   0              36m
+kube-system    ebs-csi-node-sk9px                                          3/3     Running   0              110m
+kube-system    eks-pod-identity-agent-6xfhq                                1/1     Running   0              120m
+kube-system    eks-pod-identity-agent-jmghr                                1/1     Running   0              120m
+kube-system    eks-pod-identity-agent-jpxqp                                1/1     Running   0              36m
+kube-system    eks-pod-identity-agent-rzxzm                                1/1     Running   0              120m
+kube-system    kube-proxy-96jxp                                            1/1     Running   0              36m
+kube-system    kube-proxy-96rs7                                            1/1     Running   0              120m
+kube-system    kube-proxy-gk8j4                                            1/1     Running   0              120m
+kube-system    kube-proxy-nccdm                                            1/1     Running   0              120m
+kube-system    metrics-server-5846d89996-cqsb9                             1/1     Running   0              12m
+logging        eck-beats-beat-filebeat-4tndr                               1/1     Running   0              42m
+logging        eck-beats-beat-filebeat-q25cj                               1/1     Running   0              42m
+logging        eck-beats-beat-filebeat-qjqp6                               1/1     Running   0              42m
+logging        eck-beats-beat-filebeat-wkl76                               1/1     Running   0              35m
+logging        eck-elasticsearch-es-default-0                              1/1     Running   0              42m
+logging        eck-kibana-kb-65699f8b-sq8bq                                1/1     Running   0              42m
+logging        elastic-operator-0                                          1/1     Running   0              42m
+monitoring     kube-prometheus-stack-grafana-6f7df67f5c-bl48n              3/3     Running   0              56m
+monitoring     kube-prometheus-stack-kube-state-metrics-57967b8656-2x27q   1/1     Running   0              56m
+monitoring     kube-prometheus-stack-operator-85749db6df-rnxdj             1/1     Running   0              56m
+monitoring     kube-prometheus-stack-prometheus-node-exporter-224dq        1/1     Running   0              36m
+monitoring     kube-prometheus-stack-prometheus-node-exporter-ld62m        1/1     Running   0              56m
+monitoring     kube-prometheus-stack-prometheus-node-exporter-mm99g        1/1     Running   0              56m
+monitoring     kube-prometheus-stack-prometheus-node-exporter-t89hn        1/1     Running   0              56m
+monitoring     prometheus-kube-prometheus-stack-prometheus-0               2/2     Running   0              56m
+
+# ---------------------- List all services in the cluster by namespace ----------------------
+ubuntu@ip-10-0-101-70:~$ k get svc -A
+NAMESPACE      NAME                                              TYPE        CLUSTER-IP       EXTERNAL-IP   PORT(S)                        AGE
+argocd         argocd-applicationset-controller                  ClusterIP   172.20.193.59    <none>        7000/TCP                       100m
+argocd         argocd-dex-server                                 ClusterIP   172.20.200.9     <none>        5556/TCP,5557/TCP              100m
+argocd         argocd-image-updater-controller-metrics-service   ClusterIP   172.20.132.69    <none>        8443/TCP                       84m
+argocd         argocd-redis                                      ClusterIP   172.20.32.196    <none>        6379/TCP                       100m
+argocd         argocd-repo-server                                ClusterIP   172.20.17.87     <none>        8081/TCP                       100m
+argocd         argocd-server                                     ClusterIP   172.20.249.173   <none>        80/TCP,443/TCP                 100m
+boutique-app   adservice                                         ClusterIP   172.20.181.121   <none>        9555/TCP                       90m
+boutique-app   cartservice                                       ClusterIP   172.20.185.36    <none>        7070/TCP                       90m
+boutique-app   checkoutservice                                   ClusterIP   172.20.16.82     <none>        5050/TCP                       90m
+boutique-app   currencyservice                                   ClusterIP   172.20.59.142    <none>        7000/TCP                       90m
+boutique-app   emailservice                                      ClusterIP   172.20.189.176   <none>        5000/TCP                       90m
+boutique-app   frontend                                          ClusterIP   172.20.185.65    <none>        80/TCP                         90m
+boutique-app   paymentservice                                    ClusterIP   172.20.191.90    <none>        50051/TCP                      90m
+boutique-app   productcatalogservice                             ClusterIP   172.20.40.218    <none>        3550/TCP                       90m
+boutique-app   recommendationservice                             ClusterIP   172.20.148.146   <none>        8080/TCP                       90m
+boutique-app   redis-cart                                        ClusterIP   172.20.249.99    <none>        6379/TCP                       90m
+boutique-app   shippingservice                                   ClusterIP   172.20.109.239   <none>        50051/TCP                      90m
+default        kubernetes                                        ClusterIP   172.20.0.1       <none>        443/TCP                        151m
+external-dns   external-dns                                      ClusterIP   172.20.186.69    <none>        7979/TCP                       105m
+kube-system    aws-load-balancer-webhook-service                 ClusterIP   172.20.60.30     <none>        443/TCP                        119m
+kube-system    eks-extension-metrics-api                         ClusterIP   172.20.213.133   <none>        443/TCP                        151m
+kube-system    kube-dns                                          ClusterIP   172.20.0.10      <none>        53/UDP,53/TCP,9153/TCP         149m
+kube-system    kube-prometheus-stack-coredns                     ClusterIP   None             <none>        9153/TCP                       61m
+kube-system    kube-prometheus-stack-kube-controller-manager     ClusterIP   None             <none>        10257/TCP                      61m
+kube-system    kube-prometheus-stack-kube-etcd                   ClusterIP   None             <none>        2381/TCP                       61m
+kube-system    kube-prometheus-stack-kube-proxy                  ClusterIP   None             <none>        10249/TCP                      61m
+kube-system    kube-prometheus-stack-kube-scheduler              ClusterIP   None             <none>        10259/TCP                      61m
+kube-system    kube-prometheus-stack-kubelet                     ClusterIP   None             <none>        10250/TCP,4194/TCP,10255/TCP   64m
+kube-system    metrics-server                                    ClusterIP   172.20.164.89    <none>        443/TCP                        16m
+logging        eck-elasticsearch-es-default                      ClusterIP   None             <none>        9200/TCP                       46m
+logging        eck-elasticsearch-es-http                         ClusterIP   172.20.69.244    <none>        9200/TCP                       46m
+logging        eck-elasticsearch-es-internal-http                ClusterIP   172.20.88.174    <none>        9200/TCP                       46m
+logging        eck-elasticsearch-es-transport                    ClusterIP   None             <none>        9300/TCP                       46m
+logging        eck-kibana-kb-http                                ClusterIP   172.20.186.205   <none>        5601/TCP                       46m
+logging        elastic-operator-webhook                          ClusterIP   172.20.95.238    <none>        443/TCP                        46m
+monitoring     kube-prometheus-stack-alertmanager                ClusterIP   172.20.83.134    <none>        9093/TCP,8080/TCP              61m
+monitoring     kube-prometheus-stack-grafana                     ClusterIP   172.20.243.185   <none>        80/TCP                         61m
+monitoring     kube-prometheus-stack-kube-state-metrics          ClusterIP   172.20.77.246    <none>        8080/TCP                       61m
+monitoring     kube-prometheus-stack-operator                    ClusterIP   172.20.178.15    <none>        443/TCP                        61m
+monitoring     kube-prometheus-stack-prometheus                  ClusterIP   172.20.234.163   <none>        9090/TCP,8080/TCP              61m
+monitoring     kube-prometheus-stack-prometheus-node-exporter    ClusterIP   172.20.3.97      <none>        9100/TCP                       61m
+monitoring     prometheus-operated                               ClusterIP   None             <none>        9090/TCP                       60m
+
+# ---------------------- List all deployments in the cluster by namespace ----------------------
+ubuntu@ip-10-0-101-70:~$ k get deploy -A
+NAMESPACE      NAME                                       READY   UP-TO-DATE   AVAILABLE   AGE
+argocd         argocd-applicationset-controller           1/1     1            1           96m
+argocd         argocd-dex-server                          1/1     1            1           96m
+argocd         argocd-image-updater-controller            1/1     1            1           81m
+argocd         argocd-notifications-controller            1/1     1            1           96m
+argocd         argocd-redis                               1/1     1            1           96m
+argocd         argocd-repo-server                         1/1     1            1           96m
+argocd         argocd-server                              1/1     1            1           96m
+boutique-app   adservice                                  1/1     1            1           86m
+boutique-app   cartservice                                1/1     1            1           86m
+boutique-app   checkoutservice                            1/1     1            1           86m
+boutique-app   currencyservice                            1/1     1            1           86m
+boutique-app   emailservice                               1/1     1            1           86m
+boutique-app   frontend                                   1/1     1            1           86m
+boutique-app   paymentservice                             1/1     1            1           86m
+boutique-app   productcatalogservice                      1/1     1            1           86m
+boutique-app   recommendationservice                      1/1     1            1           86m
+boutique-app   redis-cart                                 1/1     1            1           86m
+boutique-app   shippingservice                            1/1     1            1           86m
+external-dns   external-dns                               1/1     1            1           101m
+kube-system    aws-load-balancer-controller               2/2     2            2           115m
+kube-system    coredns                                    2/2     2            2           145m
+kube-system    ebs-csi-controller                         2/2     2            2           111m
+kube-system    metrics-server                             1/1     1            1           12m
+logging        eck-kibana-kb                              1/1     1            1           42m
+monitoring     kube-prometheus-stack-grafana              1/1     1            1           57m
+monitoring     kube-prometheus-stack-kube-state-metrics   1/1     1            1           57m
+monitoring     kube-prometheus-stack-operator             1/1     1            1           57m
+
+# ---------------------- List all daemonsets in the cluster by namespace ----------------------
+ubuntu@ip-10-0-101-70:~$ k get ds -A
+NAMESPACE     NAME                                             DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR              AGE
+kube-system   aws-node                                         4         4         4       4            4           <none>                     145m
+kube-system   ebs-csi-node                                     4         4         4       4            4           kubernetes.io/os=linux     111m
+kube-system   ebs-csi-node-windows                             0         0         0       0            0           kubernetes.io/os=windows   111m
+kube-system   eks-pod-identity-agent                           4         4         4       4            4           <none>                     143m
+kube-system   kube-proxy                                       4         4         4       4            4           <none>                     145m
+logging       eck-beats-beat-filebeat                          4         4         4       4            4           <none>                     42m
+monitoring    kube-prometheus-stack-prometheus-node-exporter   4         4         4       4            4           kubernetes.io/os=linux     57m
+
+# ---------------------- List all statefulsets in the cluster by namespace ----------------------
+ubuntu@ip-10-0-101-70:~$ k get sts -A
+NAMESPACE    NAME                                          READY   AGE
+argocd       argocd-application-controller                 1/1     96m
+logging      eck-elasticsearch-es-default                  1/1     43m
+logging      elastic-operator                              1/1     43m
+monitoring   prometheus-kube-prometheus-stack-prometheus   1/1     57m
+
+# ---------------------- List the sc, pvc, and pv in the cluster ----------------------
+ubuntu@ip-10-0-101-70:~$ k get sc
+NAME            PROVISIONER             RECLAIMPOLICY   VOLUMEBINDINGMODE      ALLOWVOLUMEEXPANSION   AGE
+gp2             kubernetes.io/aws-ebs   Delete          WaitForFirstConsumer   false                  147m
+gp3 (default)   ebs.csi.aws.com         Delete          WaitForFirstConsumer   true                   108m
+
+ubuntu@ip-10-0-101-70:~$ k get pvc -A
+NAMESPACE   NAME                                                STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   VOLUMEATTRIBUTESCLASS   AGE
+logging     elasticsearch-data-eck-elasticsearch-es-default-0   Bound    pvc-92bbcd6f-286e-4f89-8dc5-f5c5942bd968   1Gi        RWO            gp3            <unset>                 43m
+
+ubuntu@ip-10-0-101-70:~$ k get pv
+NAME                                       CAPACITY   ACCESS MODES   RECLAIM POLICY   STATUS   CLAIM                                                       STORAGECLASS   VOLUMEATTRIBUTESCLASS   REASON   AGE
+pvc-92bbcd6f-286e-4f89-8dc5-f5c5942bd968   1Gi        RWO            Delete           Bound    logging/elasticsearch-data-eck-elasticsearch-es-default-0   gp3            <unset>                          43m
+
+# ---------------------- List argocd applications ----------------------
+ubuntu@ip-10-0-101-70:~$ k get applications.argoproj.io -A
+NAMESPACE   NAME                 SYNC STATUS   HEALTH STATUS
+argocd      microservices-demo   Synced        Healthy
+
+# ---------------------- Get the argocd application yaml ----------------------
+ubuntu@ip-10-0-101-70:~$ k get application microservices-demo -n argocd -o yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"argoproj.io/v1alpha1","kind":"Application","metadata":{"annotations":{},"finalizers":["resources-finalizer.argocd.argoproj.io"],"name":"microservices-demo","namespace":"argocd"},"spec":{"destination":{"namespace":"boutique-app","server":"https://kubernetes.default.svc"},"project":"default","source":{"path":"systems/microservices-demo","repoURL":"https://github.com/ibtisam-iq/platform-engineering-systems.git","targetRevision":"main"},"syncPolicy":{"automated":{"prune":true,"selfHeal":true},"syncOptions":["CreateNamespace=true","ServerSideApply=true"]}}}
+  creationTimestamp: "2026-06-18T15:25:14Z"
+  finalizers:
+  - resources-finalizer.argocd.argoproj.io
+  generation: 85
+  name: microservices-demo
+  namespace: argocd
+  resourceVersion: "44516"
+  uid: 4a1d6df8-e573-4623-a38c-f87656e839de
+spec:
+  destination:
+    namespace: boutique-app
+    server: https://kubernetes.default.svc
+  project: default
+  source:
+    kustomize:
+      images:
+      - ghcr.io/ibtisam-iq/microservices-demo/frontend:latest@sha256:1805be68098551a163f43aa81073e352cb9393ec256cc698514f98db475b97a3
+      - ghcr.io/ibtisam-iq/microservices-demo/cartservice:latest@sha256:6ec533650a97de7406542eeb6a09e4522dc2e2f3c7efbff2f94602ec62eaa6a9
+      - ghcr.io/ibtisam-iq/microservices-demo/checkoutservice:latest@sha256:efdd72dbe289637ad59d7ceb0108379b99eadcdb7c3f3d75d7b63b9384d616c7
+      - ghcr.io/ibtisam-iq/microservices-demo/currencyservice:latest@sha256:3b7f55475ca7e5bfe2f3dc7a58e64aaaf64755c628dd00a0b3016a5c4e15b50d
+      - ghcr.io/ibtisam-iq/microservices-demo/emailservice:latest@sha256:345ee8ed58bfee47c65b5758a9b31d37a966b1ad0f8c8571e8f8a21fd9158895
+      - ghcr.io/ibtisam-iq/microservices-demo/paymentservice:latest@sha256:ad5e40e27ac0ed3dff2406929887837ed483e244b5d36e1895c305b31334cca8
+      - ghcr.io/ibtisam-iq/microservices-demo/productcatalogservice:latest@sha256:df12f13aa9861fd9d2adc86abe7045908726e4f2c5cd5f10274c7bbbb7496978
+      - ghcr.io/ibtisam-iq/microservices-demo/recommendationservice:latest@sha256:9ba28d278c334d57b561168ce54d8e1997babd6245e14578b2af6e9f7af36083
+      - ghcr.io/ibtisam-iq/microservices-demo/shippingservice:latest@sha256:8a04578df8c0b363ccdb606ff594d64763b968c798624258c5568f27f92d140f
+      - ghcr.io/ibtisam-iq/microservices-demo/adservice:latest@sha256:c79fa0cf2d032c121e06977a9b68b94f8c7f578a8df58fb6ba0be00d80eca678
+    path: systems/microservices-demo
+    repoURL: https://github.com/ibtisam-iq/platform-engineering-systems.git
+    targetRevision: main
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true
+    - ServerSideApply=true
+status:
+  controllerNamespace: argocd
+  health:
+    lastTransitionTime: "2026-06-18T16:46:07Z"
+    status: Healthy
+  history:
+  - deployStartedAt: "2026-06-18T15:25:20Z"
+    deployedAt: "2026-06-18T15:25:24Z"
+    id: 0
+    initiatedBy:
+      automated: true
+    revision: e1910c7203074988eeeb7d0ec3e91273ff82b461
+    source:
+      path: systems/microservices-demo
+      repoURL: https://github.com/ibtisam-iq/platform-engineering-systems.git
+      targetRevision: main
+  - deployStartedAt: "2026-06-18T15:31:00Z"
+    deployedAt: "2026-06-18T15:31:03Z"
+    id: 1
+    initiatedBy:
+      automated: true
+    revision: e1910c7203074988eeeb7d0ec3e91273ff82b461
+    source:
+      kustomize:
+        images:
+        - ghcr.io/ibtisam-iq/microservices-demo/frontend:latest@sha256:21fda4268684bb9071f1c7d169a1c5c6232edfc6f56d7d6fb2b831adaa681d4d
+        - ghcr.io/ibtisam-iq/microservices-demo/cartservice:latest@sha256:6ec533650a97de7406542eeb6a09e4522dc2e2f3c7efbff2f94602ec62eaa6a9
+        - ghcr.io/ibtisam-iq/microservices-demo/checkoutservice:latest@sha256:efdd72dbe289637ad59d7ceb0108379b99eadcdb7c3f3d75d7b63b9384d616c7
+        - ghcr.io/ibtisam-iq/microservices-demo/currencyservice:latest@sha256:3b7f55475ca7e5bfe2f3dc7a58e64aaaf64755c628dd00a0b3016a5c4e15b50d
+        - ghcr.io/ibtisam-iq/microservices-demo/emailservice:latest@sha256:345ee8ed58bfee47c65b5758a9b31d37a966b1ad0f8c8571e8f8a21fd9158895
+        - ghcr.io/ibtisam-iq/microservices-demo/paymentservice:latest@sha256:ad5e40e27ac0ed3dff2406929887837ed483e244b5d36e1895c305b31334cca8
+        - ghcr.io/ibtisam-iq/microservices-demo/productcatalogservice:latest@sha256:df12f13aa9861fd9d2adc86abe7045908726e4f2c5cd5f10274c7bbbb7496978
+        - ghcr.io/ibtisam-iq/microservices-demo/recommendationservice:latest@sha256:9ba28d278c334d57b561168ce54d8e1997babd6245e14578b2af6e9f7af36083
+        - ghcr.io/ibtisam-iq/microservices-demo/shippingservice:latest@sha256:8a04578df8c0b363ccdb606ff594d64763b968c798624258c5568f27f92d140f
+        - ghcr.io/ibtisam-iq/microservices-demo/adservice:latest@sha256:c79fa0cf2d032c121e06977a9b68b94f8c7f578a8df58fb6ba0be00d80eca678
+      path: systems/microservices-demo
+      repoURL: https://github.com/ibtisam-iq/platform-engineering-systems.git
+      targetRevision: main
+  - deployStartedAt: "2026-06-18T15:35:04Z"
+    deployedAt: "2026-06-18T15:35:07Z"
+    id: 2
+    initiatedBy:
+      automated: true
+    revision: e1910c7203074988eeeb7d0ec3e91273ff82b461
+    source:
+      kustomize:
+        images:
+        - ghcr.io/ibtisam-iq/microservices-demo/frontend:latest@sha256:1805be68098551a163f43aa81073e352cb9393ec256cc698514f98db475b97a3
+        - ghcr.io/ibtisam-iq/microservices-demo/cartservice:latest@sha256:6ec533650a97de7406542eeb6a09e4522dc2e2f3c7efbff2f94602ec62eaa6a9
+        - ghcr.io/ibtisam-iq/microservices-demo/checkoutservice:latest@sha256:efdd72dbe289637ad59d7ceb0108379b99eadcdb7c3f3d75d7b63b9384d616c7
+        - ghcr.io/ibtisam-iq/microservices-demo/currencyservice:latest@sha256:3b7f55475ca7e5bfe2f3dc7a58e64aaaf64755c628dd00a0b3016a5c4e15b50d
+        - ghcr.io/ibtisam-iq/microservices-demo/emailservice:latest@sha256:345ee8ed58bfee47c65b5758a9b31d37a966b1ad0f8c8571e8f8a21fd9158895
+        - ghcr.io/ibtisam-iq/microservices-demo/paymentservice:latest@sha256:ad5e40e27ac0ed3dff2406929887837ed483e244b5d36e1895c305b31334cca8
+        - ghcr.io/ibtisam-iq/microservices-demo/productcatalogservice:latest@sha256:df12f13aa9861fd9d2adc86abe7045908726e4f2c5cd5f10274c7bbbb7496978
+        - ghcr.io/ibtisam-iq/microservices-demo/recommendationservice:latest@sha256:9ba28d278c334d57b561168ce54d8e1997babd6245e14578b2af6e9f7af36083
+        - ghcr.io/ibtisam-iq/microservices-demo/shippingservice:latest@sha256:8a04578df8c0b363ccdb606ff594d64763b968c798624258c5568f27f92d140f
+        - ghcr.io/ibtisam-iq/microservices-demo/adservice:latest@sha256:c79fa0cf2d032c121e06977a9b68b94f8c7f578a8df58fb6ba0be00d80eca678
+      path: systems/microservices-demo
+      repoURL: https://github.com/ibtisam-iq/platform-engineering-systems.git
+      targetRevision: main
+  operationState:
+    finishedAt: "2026-06-18T15:35:07Z"
+    message: successfully synced (all tasks run)
+    operation:
+      initiatedBy:
+        automated: true
+      retry:
+        limit: 5
+      sync:
+        prune: true
+        revision: e1910c7203074988eeeb7d0ec3e91273ff82b461
+        source:
+          kustomize:
+            images:
+            - ghcr.io/ibtisam-iq/microservices-demo/frontend:latest@sha256:1805be68098551a163f43aa81073e352cb9393ec256cc698514f98db475b97a3
+            - ghcr.io/ibtisam-iq/microservices-demo/cartservice:latest@sha256:6ec533650a97de7406542eeb6a09e4522dc2e2f3c7efbff2f94602ec62eaa6a9
+            - ghcr.io/ibtisam-iq/microservices-demo/checkoutservice:latest@sha256:efdd72dbe289637ad59d7ceb0108379b99eadcdb7c3f3d75d7b63b9384d616c7
+            - ghcr.io/ibtisam-iq/microservices-demo/currencyservice:latest@sha256:3b7f55475ca7e5bfe2f3dc7a58e64aaaf64755c628dd00a0b3016a5c4e15b50d
+            - ghcr.io/ibtisam-iq/microservices-demo/emailservice:latest@sha256:345ee8ed58bfee47c65b5758a9b31d37a966b1ad0f8c8571e8f8a21fd9158895
+            - ghcr.io/ibtisam-iq/microservices-demo/paymentservice:latest@sha256:ad5e40e27ac0ed3dff2406929887837ed483e244b5d36e1895c305b31334cca8
+            - ghcr.io/ibtisam-iq/microservices-demo/productcatalogservice:latest@sha256:df12f13aa9861fd9d2adc86abe7045908726e4f2c5cd5f10274c7bbbb7496978
+            - ghcr.io/ibtisam-iq/microservices-demo/recommendationservice:latest@sha256:9ba28d278c334d57b561168ce54d8e1997babd6245e14578b2af6e9f7af36083
+            - ghcr.io/ibtisam-iq/microservices-demo/shippingservice:latest@sha256:8a04578df8c0b363ccdb606ff594d64763b968c798624258c5568f27f92d140f
+            - ghcr.io/ibtisam-iq/microservices-demo/adservice:latest@sha256:c79fa0cf2d032c121e06977a9b68b94f8c7f578a8df58fb6ba0be00d80eca678
+          path: systems/microservices-demo
+          repoURL: https://github.com/ibtisam-iq/platform-engineering-systems.git
+          targetRevision: main
+        syncOptions:
+        - CreateNamespace=true
+        - ServerSideApply=true
+    phase: Succeeded
+    startedAt: "2026-06-18T15:35:04Z"
+    syncResult:
+      resources:
+      - group: ""
+        hookPhase: Running
+        kind: ServiceAccount
+        message: serviceaccount/adservice serverside-applied
+        name: adservice
+        namespace: boutique-app
+        status: Synced
+        syncPhase: Sync
+        version: v1
+      - group: ""
+        hookPhase: Running
+        kind: ServiceAccount
+        message: serviceaccount/emailservice serverside-applied
+        name: emailservice
+        namespace: boutique-app
+        status: Synced
+        syncPhase: Sync
+        version: v1
+      - group: ""
+        hookPhase: Running
+        kind: ServiceAccount
+        message: serviceaccount/cartservice serverside-applied
+        name: cartservice
+        namespace: boutique-app
+        status: Synced
+        syncPhase: Sync
+        version: v1
+      - group: ""
+        hookPhase: Running
+        kind: ServiceAccount
+        message: serviceaccount/currencyservice serverside-applied
+        name: currencyservice
+        namespace: boutique-app
+        status: Synced
+        syncPhase: Sync
+        version: v1
+      - group: ""
+        hookPhase: Running
+        kind: ServiceAccount
+        message: serviceaccount/paymentservice serverside-applied
+        name: paymentservice
+        namespace: boutique-app
+        status: Synced
+        syncPhase: Sync
+        version: v1
+      - group: ""
+        hookPhase: Running
+        kind: ServiceAccount
+        message: serviceaccount/frontend serverside-applied
+        name: frontend
+        namespace: boutique-app
+        status: Synced
+        syncPhase: Sync
+        version: v1
+      - group: ""
+        hookPhase: Running
+        kind: ServiceAccount
+        message: serviceaccount/redis-cart serverside-applied
+        name: redis-cart
+        namespace: boutique-app
+        status: Synced
+        syncPhase: Sync
+        version: v1
+      - group: ""
+        hookPhase: Running
+        kind: ServiceAccount
+        message: serviceaccount/checkoutservice serverside-applied
+        name: checkoutservice
+        namespace: boutique-app
+        status: Synced
+        syncPhase: Sync
+        version: v1
+      - group: ""
+        hookPhase: Running
+        kind: ServiceAccount
+        message: serviceaccount/recommendationservice serverside-applied
+        name: recommendationservice
+        namespace: boutique-app
+        status: Synced
+        syncPhase: Sync
+        version: v1
+      - group: ""
+        hookPhase: Running
+        kind: ServiceAccount
+        message: serviceaccount/shippingservice serverside-applied
+        name: shippingservice
+        namespace: boutique-app
+        status: Synced
+        syncPhase: Sync
+        version: v1
+      - group: ""
+        hookPhase: Running
+        kind: ServiceAccount
+        message: serviceaccount/productcatalogservice serverside-applied
+        name: productcatalogservice
+        namespace: boutique-app
+        status: Synced
+        syncPhase: Sync
+        version: v1
+      - group: ""
+        hookPhase: Running
+        kind: Service
+        message: service/adservice serverside-applied
+        name: adservice
+        namespace: boutique-app
+        status: Synced
+        syncPhase: Sync
+        version: v1
+      - group: ""
+        hookPhase: Running
+        kind: Service
+        message: service/frontend serverside-applied
+        name: frontend
+        namespace: boutique-app
+        status: Synced
+        syncPhase: Sync
+        version: v1
+      - group: ""
+        hookPhase: Running
+        kind: Service
+        message: service/checkoutservice serverside-applied
+        name: checkoutservice
+        namespace: boutique-app
+        status: Synced
+        syncPhase: Sync
+        version: v1
+      - group: ""
+        hookPhase: Running
+        kind: Service
+        message: service/currencyservice serverside-applied
+        name: currencyservice
+        namespace: boutique-app
+        status: Synced
+        syncPhase: Sync
+        version: v1
+      - group: ""
+        hookPhase: Running
+        kind: Service
+        message: service/paymentservice serverside-applied
+        name: paymentservice
+        namespace: boutique-app
+        status: Synced
+        syncPhase: Sync
+        version: v1
+      - group: ""
+        hookPhase: Running
+        kind: Service
+        message: service/emailservice serverside-applied
+        name: emailservice
+        namespace: boutique-app
+        status: Synced
+        syncPhase: Sync
+        version: v1
+      - group: ""
+        hookPhase: Running
+        kind: Service
+        message: service/recommendationservice serverside-applied
+        name: recommendationservice
+        namespace: boutique-app
+        status: Synced
+        syncPhase: Sync
+        version: v1
+      - group: ""
+        hookPhase: Running
+        kind: Service
+        message: service/shippingservice serverside-applied
+        name: shippingservice
+        namespace: boutique-app
+        status: Synced
+        syncPhase: Sync
+        version: v1
+      - group: ""
+        hookPhase: Running
+        kind: Service
+        message: service/cartservice serverside-applied
+        name: cartservice
+        namespace: boutique-app
+        status: Synced
+        syncPhase: Sync
+        version: v1
+      - group: ""
+        hookPhase: Running
+        kind: Service
+        message: service/redis-cart serverside-applied
+        name: redis-cart
+        namespace: boutique-app
+        status: Synced
+        syncPhase: Sync
+        version: v1
+      - group: ""
+        hookPhase: Running
+        kind: Service
+        message: service/productcatalogservice serverside-applied
+        name: productcatalogservice
+        namespace: boutique-app
+        status: Synced
+        syncPhase: Sync
+        version: v1
+      - group: apps
+        hookPhase: Running
+        images:
+        - ghcr.io/ibtisam-iq/microservices-demo/productcatalogservice:latest@sha256:df12f13aa9861fd9d2adc86abe7045908726e4f2c5cd5f10274c7bbbb7496978
+        kind: Deployment
+        message: deployment.apps/productcatalogservice serverside-applied
+        name: productcatalogservice
+        namespace: boutique-app
+        status: Synced
+        syncPhase: Sync
+        version: v1
+      - group: apps
+        hookPhase: Running
+        images:
+        - ghcr.io/ibtisam-iq/microservices-demo/frontend:latest@sha256:1805be68098551a163f43aa81073e352cb9393ec256cc698514f98db475b97a3
+        kind: Deployment
+        message: deployment.apps/frontend serverside-applied
+        name: frontend
+        namespace: boutique-app
+        status: Synced
+        syncPhase: Sync
+        version: v1
+      - group: apps
+        hookPhase: Running
+        images:
+        - ghcr.io/ibtisam-iq/microservices-demo/checkoutservice:latest@sha256:efdd72dbe289637ad59d7ceb0108379b99eadcdb7c3f3d75d7b63b9384d616c7
+        kind: Deployment
+        message: deployment.apps/checkoutservice serverside-applied
+        name: checkoutservice
+        namespace: boutique-app
+        status: Synced
+        syncPhase: Sync
+        version: v1
+      - group: apps
+        hookPhase: Running
+        images:
+        - ghcr.io/ibtisam-iq/microservices-demo/currencyservice:latest@sha256:3b7f55475ca7e5bfe2f3dc7a58e64aaaf64755c628dd00a0b3016a5c4e15b50d
+        kind: Deployment
+        message: deployment.apps/currencyservice serverside-applied
+        name: currencyservice
+        namespace: boutique-app
+        status: Synced
+        syncPhase: Sync
+        version: v1
+      - group: apps
+        hookPhase: Running
+        images:
+        - ghcr.io/ibtisam-iq/microservices-demo/recommendationservice:latest@sha256:9ba28d278c334d57b561168ce54d8e1997babd6245e14578b2af6e9f7af36083
+        kind: Deployment
+        message: deployment.apps/recommendationservice serverside-applied
+        name: recommendationservice
+        namespace: boutique-app
+        status: Synced
+        syncPhase: Sync
+        version: v1
+      - group: apps
+        hookPhase: Running
+        images:
+        - redis:alpine@sha256:c5e375abb885e6b2021c0377879e4890bf76f9065b8922ffc113f2b226b9fc17
+        kind: Deployment
+        message: deployment.apps/redis-cart serverside-applied
+        name: redis-cart
+        namespace: boutique-app
+        status: Synced
+        syncPhase: Sync
+        version: v1
+      - group: apps
+        hookPhase: Running
+        images:
+        - ghcr.io/ibtisam-iq/microservices-demo/adservice:latest@sha256:c79fa0cf2d032c121e06977a9b68b94f8c7f578a8df58fb6ba0be00d80eca678
+        kind: Deployment
+        message: deployment.apps/adservice serverside-applied
+        name: adservice
+        namespace: boutique-app
+        status: Synced
+        syncPhase: Sync
+        version: v1
+      - group: apps
+        hookPhase: Running
+        images:
+        - ghcr.io/ibtisam-iq/microservices-demo/shippingservice:latest@sha256:8a04578df8c0b363ccdb606ff594d64763b968c798624258c5568f27f92d140f
+        kind: Deployment
+        message: deployment.apps/shippingservice serverside-applied
+        name: shippingservice
+        namespace: boutique-app
+        status: Synced
+        syncPhase: Sync
+        version: v1
+      - group: apps
+        hookPhase: Running
+        images:
+        - ghcr.io/ibtisam-iq/microservices-demo/cartservice:latest@sha256:6ec533650a97de7406542eeb6a09e4522dc2e2f3c7efbff2f94602ec62eaa6a9
+        kind: Deployment
+        message: deployment.apps/cartservice serverside-applied
+        name: cartservice
+        namespace: boutique-app
+        status: Synced
+        syncPhase: Sync
+        version: v1
+      - group: apps
+        hookPhase: Running
+        images:
+        - ghcr.io/ibtisam-iq/microservices-demo/emailservice:latest@sha256:345ee8ed58bfee47c65b5758a9b31d37a966b1ad0f8c8571e8f8a21fd9158895
+        kind: Deployment
+        message: deployment.apps/emailservice serverside-applied
+        name: emailservice
+        namespace: boutique-app
+        status: Synced
+        syncPhase: Sync
+        version: v1
+      - group: apps
+        hookPhase: Running
+        images:
+        - ghcr.io/ibtisam-iq/microservices-demo/paymentservice:latest@sha256:ad5e40e27ac0ed3dff2406929887837ed483e244b5d36e1895c305b31334cca8
+        kind: Deployment
+        message: deployment.apps/paymentservice serverside-applied
+        name: paymentservice
+        namespace: boutique-app
+        status: Synced
+        syncPhase: Sync
+        version: v1
+      - group: gateway.k8s.aws
+        hookPhase: Running
+        kind: TargetGroupConfiguration
+        message: targetgroupconfiguration.gateway.k8s.aws/app-tg-config serverside-applied
+        name: app-tg-config
+        namespace: boutique-app
+        status: Synced
+        syncPhase: Sync
+        version: v1beta1
+      - group: gateway.networking.k8s.io
+        hookPhase: Running
+        kind: HTTPRoute
+        message: httproute.gateway.networking.k8s.io/http-app-route serverside-applied
+        name: http-app-route
+        namespace: boutique-app
+        status: Synced
+        syncPhase: Sync
+        version: v1beta1
+      revision: e1910c7203074988eeeb7d0ec3e91273ff82b461
+      source:
+        kustomize:
+          images:
+          - ghcr.io/ibtisam-iq/microservices-demo/frontend:latest@sha256:1805be68098551a163f43aa81073e352cb9393ec256cc698514f98db475b97a3
+          - ghcr.io/ibtisam-iq/microservices-demo/cartservice:latest@sha256:6ec533650a97de7406542eeb6a09e4522dc2e2f3c7efbff2f94602ec62eaa6a9
+          - ghcr.io/ibtisam-iq/microservices-demo/checkoutservice:latest@sha256:efdd72dbe289637ad59d7ceb0108379b99eadcdb7c3f3d75d7b63b9384d616c7
+          - ghcr.io/ibtisam-iq/microservices-demo/currencyservice:latest@sha256:3b7f55475ca7e5bfe2f3dc7a58e64aaaf64755c628dd00a0b3016a5c4e15b50d
+          - ghcr.io/ibtisam-iq/microservices-demo/emailservice:latest@sha256:345ee8ed58bfee47c65b5758a9b31d37a966b1ad0f8c8571e8f8a21fd9158895
+          - ghcr.io/ibtisam-iq/microservices-demo/paymentservice:latest@sha256:ad5e40e27ac0ed3dff2406929887837ed483e244b5d36e1895c305b31334cca8
+          - ghcr.io/ibtisam-iq/microservices-demo/productcatalogservice:latest@sha256:df12f13aa9861fd9d2adc86abe7045908726e4f2c5cd5f10274c7bbbb7496978
+          - ghcr.io/ibtisam-iq/microservices-demo/recommendationservice:latest@sha256:9ba28d278c334d57b561168ce54d8e1997babd6245e14578b2af6e9f7af36083
+          - ghcr.io/ibtisam-iq/microservices-demo/shippingservice:latest@sha256:8a04578df8c0b363ccdb606ff594d64763b968c798624258c5568f27f92d140f
+          - ghcr.io/ibtisam-iq/microservices-demo/adservice:latest@sha256:c79fa0cf2d032c121e06977a9b68b94f8c7f578a8df58fb6ba0be00d80eca678
+        path: systems/microservices-demo
+        repoURL: https://github.com/ibtisam-iq/platform-engineering-systems.git
+        targetRevision: main
+  reconciledAt: "2026-06-18T16:54:34Z"
+  resourceHealthSource: appTree
+  resources:
+  - kind: Service
+    name: adservice
+    namespace: boutique-app
+    status: Synced
+    version: v1
+  - kind: Service
+    name: cartservice
+    namespace: boutique-app
+    status: Synced
+    version: v1
+  - kind: Service
+    name: checkoutservice
+    namespace: boutique-app
+    status: Synced
+    version: v1
+  - kind: Service
+    name: currencyservice
+    namespace: boutique-app
+    status: Synced
+    version: v1
+  - kind: Service
+    name: emailservice
+    namespace: boutique-app
+    status: Synced
+    version: v1
+  - kind: Service
+    name: frontend
+    namespace: boutique-app
+    status: Synced
+    version: v1
+  - kind: Service
+    name: paymentservice
+    namespace: boutique-app
+    status: Synced
+    version: v1
+  - kind: Service
+    name: productcatalogservice
+    namespace: boutique-app
+    status: Synced
+    version: v1
+  - kind: Service
+    name: recommendationservice
+    namespace: boutique-app
+    status: Synced
+    version: v1
+  - kind: Service
+    name: redis-cart
+    namespace: boutique-app
+    status: Synced
+    version: v1
+  - kind: Service
+    name: shippingservice
+    namespace: boutique-app
+    status: Synced
+    version: v1
+  - kind: ServiceAccount
+    name: adservice
+    namespace: boutique-app
+    status: Synced
+    version: v1
+  - kind: ServiceAccount
+    name: cartservice
+    namespace: boutique-app
+    status: Synced
+    version: v1
+  - kind: ServiceAccount
+    name: checkoutservice
+    namespace: boutique-app
+    status: Synced
+    version: v1
+  - kind: ServiceAccount
+    name: currencyservice
+    namespace: boutique-app
+    status: Synced
+    version: v1
+  - kind: ServiceAccount
+    name: emailservice
+    namespace: boutique-app
+    status: Synced
+    version: v1
+  - kind: ServiceAccount
+    name: frontend
+    namespace: boutique-app
+    status: Synced
+    version: v1
+  - kind: ServiceAccount
+    name: paymentservice
+    namespace: boutique-app
+    status: Synced
+    version: v1
+  - kind: ServiceAccount
+    name: productcatalogservice
+    namespace: boutique-app
+    status: Synced
+    version: v1
+  - kind: ServiceAccount
+    name: recommendationservice
+    namespace: boutique-app
+    status: Synced
+    version: v1
+  - kind: ServiceAccount
+    name: redis-cart
+    namespace: boutique-app
+    status: Synced
+    version: v1
+  - kind: ServiceAccount
+    name: shippingservice
+    namespace: boutique-app
+    status: Synced
+    version: v1
+  - group: apps
+    kind: Deployment
+    name: adservice
+    namespace: boutique-app
+    status: Synced
+    version: v1
+  - group: apps
+    kind: Deployment
+    name: cartservice
+    namespace: boutique-app
+    status: Synced
+    version: v1
+  - group: apps
+    kind: Deployment
+    name: checkoutservice
+    namespace: boutique-app
+    status: Synced
+    version: v1
+  - group: apps
+    kind: Deployment
+    name: currencyservice
+    namespace: boutique-app
+    status: Synced
+    version: v1
+  - group: apps
+    kind: Deployment
+    name: emailservice
+    namespace: boutique-app
+    status: Synced
+    version: v1
+  - group: apps
+    kind: Deployment
+    name: frontend
+    namespace: boutique-app
+    status: Synced
+    version: v1
+  - group: apps
+    kind: Deployment
+    name: paymentservice
+    namespace: boutique-app
+    status: Synced
+    version: v1
+  - group: apps
+    kind: Deployment
+    name: productcatalogservice
+    namespace: boutique-app
+    status: Synced
+    version: v1
+  - group: apps
+    kind: Deployment
+    name: recommendationservice
+    namespace: boutique-app
+    status: Synced
+    version: v1
+  - group: apps
+    kind: Deployment
+    name: redis-cart
+    namespace: boutique-app
+    status: Synced
+    version: v1
+  - group: apps
+    kind: Deployment
+    name: shippingservice
+    namespace: boutique-app
+    status: Synced
+    version: v1
+  - group: gateway.k8s.aws
+    kind: TargetGroupConfiguration
+    name: app-tg-config
+    namespace: boutique-app
+    status: Synced
+    version: v1beta1
+  - group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: http-app-route
+    namespace: boutique-app
+    status: Synced
+    version: v1beta1
+  sourceHydrator: {}
+  sourceType: Kustomize
+  summary:
+    images:
+    - ghcr.io/ibtisam-iq/microservices-demo/adservice:latest@sha256:c79fa0cf2d032c121e06977a9b68b94f8c7f578a8df58fb6ba0be00d80eca678
+    - ghcr.io/ibtisam-iq/microservices-demo/cartservice:latest@sha256:6ec533650a97de7406542eeb6a09e4522dc2e2f3c7efbff2f94602ec62eaa6a9
+    - ghcr.io/ibtisam-iq/microservices-demo/checkoutservice:latest@sha256:efdd72dbe289637ad59d7ceb0108379b99eadcdb7c3f3d75d7b63b9384d616c7
+    - ghcr.io/ibtisam-iq/microservices-demo/currencyservice:latest@sha256:3b7f55475ca7e5bfe2f3dc7a58e64aaaf64755c628dd00a0b3016a5c4e15b50d
+    - ghcr.io/ibtisam-iq/microservices-demo/emailservice:latest@sha256:345ee8ed58bfee47c65b5758a9b31d37a966b1ad0f8c8571e8f8a21fd9158895
+    - ghcr.io/ibtisam-iq/microservices-demo/frontend:latest@sha256:1805be68098551a163f43aa81073e352cb9393ec256cc698514f98db475b97a3
+    - ghcr.io/ibtisam-iq/microservices-demo/paymentservice:latest@sha256:ad5e40e27ac0ed3dff2406929887837ed483e244b5d36e1895c305b31334cca8
+    - ghcr.io/ibtisam-iq/microservices-demo/productcatalogservice:latest@sha256:df12f13aa9861fd9d2adc86abe7045908726e4f2c5cd5f10274c7bbbb7496978
+    - ghcr.io/ibtisam-iq/microservices-demo/recommendationservice:latest@sha256:9ba28d278c334d57b561168ce54d8e1997babd6245e14578b2af6e9f7af36083
+    - ghcr.io/ibtisam-iq/microservices-demo/shippingservice:latest@sha256:8a04578df8c0b363ccdb606ff594d64763b968c798624258c5568f27f92d140f
+    - redis:alpine@sha256:c5e375abb885e6b2021c0377879e4890bf76f9065b8922ffc113f2b226b9fc17
+  sync:
+    comparedTo:
+      destination:
+        namespace: boutique-app
+        server: https://kubernetes.default.svc
+      source:
+        kustomize:
+          images:
+          - ghcr.io/ibtisam-iq/microservices-demo/frontend:latest@sha256:1805be68098551a163f43aa81073e352cb9393ec256cc698514f98db475b97a3
+          - ghcr.io/ibtisam-iq/microservices-demo/cartservice:latest@sha256:6ec533650a97de7406542eeb6a09e4522dc2e2f3c7efbff2f94602ec62eaa6a9
+          - ghcr.io/ibtisam-iq/microservices-demo/checkoutservice:latest@sha256:efdd72dbe289637ad59d7ceb0108379b99eadcdb7c3f3d75d7b63b9384d616c7
+          - ghcr.io/ibtisam-iq/microservices-demo/currencyservice:latest@sha256:3b7f55475ca7e5bfe2f3dc7a58e64aaaf64755c628dd00a0b3016a5c4e15b50d
+          - ghcr.io/ibtisam-iq/microservices-demo/emailservice:latest@sha256:345ee8ed58bfee47c65b5758a9b31d37a966b1ad0f8c8571e8f8a21fd9158895
+          - ghcr.io/ibtisam-iq/microservices-demo/paymentservice:latest@sha256:ad5e40e27ac0ed3dff2406929887837ed483e244b5d36e1895c305b31334cca8
+          - ghcr.io/ibtisam-iq/microservices-demo/productcatalogservice:latest@sha256:df12f13aa9861fd9d2adc86abe7045908726e4f2c5cd5f10274c7bbbb7496978
+          - ghcr.io/ibtisam-iq/microservices-demo/recommendationservice:latest@sha256:9ba28d278c334d57b561168ce54d8e1997babd6245e14578b2af6e9f7af36083
+          - ghcr.io/ibtisam-iq/microservices-demo/shippingservice:latest@sha256:8a04578df8c0b363ccdb606ff594d64763b968c798624258c5568f27f92d140f
+          - ghcr.io/ibtisam-iq/microservices-demo/adservice:latest@sha256:c79fa0cf2d032c121e06977a9b68b94f8c7f578a8df58fb6ba0be00d80eca678
+        path: systems/microservices-demo
+        repoURL: https://github.com/ibtisam-iq/platform-engineering-systems.git
+        targetRevision: main
+    revision: 9d9e544b22c956c6f337b783a9db35968a5e46f1
+    status: Synced
+
+# ---------------------- List elasticsearch, kibana, and filebeat resources ----------------------
+ubuntu@ip-10-0-101-70:~$ k get elastic -A
+NAMESPACE   NAME                                 HEALTH   AVAILABLE   EXPECTED   TYPE       VERSION   AGE
+logging     beat.beat.k8s.elastic.co/eck-beats   green    4           4          filebeat   9.4.0     48m
+
+NAMESPACE   NAME                                                           HEALTH   NODES   VERSION   PHASE   AGE
+logging     elasticsearch.elasticsearch.k8s.elastic.co/eck-elasticsearch   yellow   1       9.4.0     Ready   48m
+
+NAMESPACE   NAME                                      HEALTH   NODES   VERSION   AGE
+logging     kibana.kibana.k8s.elastic.co/eck-kibana   green    1       9.4.0     48m
