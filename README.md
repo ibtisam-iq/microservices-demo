@@ -11,7 +11,7 @@ A 10-service polyglot microservices application deployed on Amazon EKS using a f
 | **AWS Lab** | [KodeKloud AWS Playground](https://learn.kodekloud.com/user/playgrounds/playground-aws) (SCP-restricted, not a personal account) |
  
 > [!NOTE]
-> [SilverStack](https://labs.iximiuz.com/playgrounds/SilverStack-dev-machine-e672bcf7) is a custom root filesystem micro VM on [iximiuz Labs](https://labs.iximiuz.com/a/ibtisam-iq), built and maintained by me with all DevOps tools pre-installed (`kubectl`, `eksctl`, `terraform`, `helm`, `helmfile`, `aws cli`, etc.). No local machine setup required. See the [rootfs setup runbook](https://runbook.ibtisam-iq.com/containers/iximiuz/rootfs/setup-dev-machine-rootfs-image/) for how it is built.
+> [SilverStack Dev Machine](https://labs.iximiuz.com/playgrounds/SilverStack-dev-machine-e672bcf7) is a custom root filesystem micro VM on [iximiuz Labs](https://labs.iximiuz.com/a/ibtisam-iq), built and maintained by me with all DevOps tools pre-installed (`kubectl`, `eksctl`, `terraform`, `helm`, `helmfile`, `aws cli`, etc.). No local machine setup required. See the [rootfs setup runbook](https://runbook.ibtisam-iq.com/containers/iximiuz/rootfs/setup-dev-machine-rootfs-image/) for how it is built.
 
 ---
 
@@ -55,6 +55,16 @@ Subdomains (deployed and verified, then destroyed):
     kibana.ibtisam.qzz.io       Kibana log search
 ```
 
+### Proof of Deployment
+ 
+The infrastructure was deployed on a KodeKloud AWS Playground, verified end to end, and then destroyed. Full terminal sessions and screenshots are recorded below.
+ 
+| Online Boutique live at `app.ibtisam.qzz.io` | ArgoCD app tree after Image Updater rollout |
+|---|---|
+| ![Online Boutique](assets/03_online_boutique_web_view.png) | ![ArgoCD Image Updater](assets/04_argo_app_tree_image_updater_frontend_revision.png) |
+ 
+![SilverStack Dev Machine](assets/01_silverstack_dev_machine.png)
+ 
 ---
 
 ## What I Built
@@ -108,7 +118,7 @@ CI does not touch the cluster. ArgoCD Image Updater handles deployments by watch
 | **Trivy CRITICAL gate** (temporarily relaxed) | Designed as exit-code 1. Set to 0 because upstream base images carry known CRITICALs. Restore once patched. |
 | **Wildcard ACM cert** (`*.ibtisam.qzz.io`) | One cert for all subdomains. No new cert when a subdomain is added. |
 
-Full decision log (24 decisions): [runbook index](https://runbook.ibtisam-iq.com/projects/deployments/microservices-demo/)
+Full decision log (24 decisions): [runbook index](https://runbook.ibtisam-iq.com/projects/deployments/microservices-demo/#key-decisions)
 
 ---
 
@@ -163,7 +173,7 @@ Every step was recorded. The terminal sessions capture the exact commands, outpu
 
 ## Screenshots
 
-Verification evidence captured during deployment. The infrastructure was deployed, verified, and then destroyed (demo project on KodeKloud AWS Playground).
+Complete inventory of all verification evidence captured during deployment.
 
 | # | Screenshot | Phase |
 |---|------------|-------|
